@@ -2,11 +2,13 @@ module github.com/TecharoHQ/gubal
 
 go 1.26.4
 
-require github.com/facebookgo/flagenv v0.0.0-20160425205200-fcd59fca7456
+require (
+	github.com/chromedp/cdproto v0.0.0-20250724212937-08a3db8b4327
+	github.com/chromedp/chromedp v0.14.1
+	github.com/facebookgo/flagenv v0.0.0-20160425205200-fcd59fca7456
+)
 
 require (
-	github.com/chromedp/cdproto v0.0.0-20250724212937-08a3db8b4327 // indirect
-	github.com/chromedp/chromedp v0.14.1 // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/facebookgo/ensure v0.0.0-20200202191622-63f1cf65ac4c // indirect

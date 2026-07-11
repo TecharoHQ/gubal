@@ -6,6 +6,11 @@
 // It is meant to run alongside Chrome in the same pod, so it can reach CDP at
 // localhost:9222 (where the Host header is "localhost" and DevTools' anti
 // DNS-rebinding check is satisfied) and reach the sidecar at localhost:8080.
+//
+// Pass -header "Name: Value" (repeatable) to send extra headers with every
+// request, and -expect-text to wait until the loaded page contains a string
+// before screenshotting — together they prove a header round-tripped through a
+// reflector like httpdebug (set the header, expect its value back).
 package main
 
 import (
@@ -22,22 +27,41 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/browser"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 	"github.com/facebookgo/flagenv"
 )
 
 var (
-	cdpURL    = flag.String("cdp-url", "http://localhost:9222", "base URL of the Chrome DevTools endpoint to drive")
-	targetURL = flag.String("target-url", "http://localhost:8080", "URL to load in the browser before capturing")
-	outDir    = flag.String("out-dir", "/data", "directory to write captured PNG frames into (mount a PVC here)")
-	interval  = flag.Duration("interval", 0, "capture repeatedly on this interval; 0 captures once and exits")
-	timeout   = flag.Duration("capture-timeout", 30*time.Second, "maximum time for a single navigate+screenshot")
-	width     = flag.Int("width", 1280, "viewport width in pixels (0 leaves Chrome's default)")
-	height    = flag.Int("height", 720, "viewport height in pixels (0 leaves Chrome's default)")
-	slogLevel = flag.String("slog-level", "info", "log level: debug, info, warn, error")
+	cdpURL     = flag.String("cdp-url", "http://localhost:9222", "base URL of the Chrome DevTools endpoint to drive")
+	targetURL  = flag.String("target-url", "http://localhost:8080", "URL to load in the browser before capturing")
+	outDir     = flag.String("out-dir", "/data", "directory to write captured PNG frames into (mount a PVC here)")
+	interval   = flag.Duration("interval", 0, "capture repeatedly on this interval; 0 captures once and exits")
+	timeout    = flag.Duration("capture-timeout", 30*time.Second, "maximum time for a single navigate+wait+screenshot")
+	width      = flag.Int("width", 1280, "viewport width in pixels (0 leaves Chrome's default)")
+	height     = flag.Int("height", 720, "viewport height in pixels (0 leaves Chrome's default)")
+	expectText = flag.String("expect-text", "", "if set, wait until the loaded page's text contains this substring before screenshotting (fails on timeout)")
+	slogLevel  = flag.String("slog-level", "info", "log level: debug, info, warn, error")
 )
 
+// headerFlags collects repeated -header "Name: Value" flags; parsed into
+// extraHeaders (the shape CDP wants) once in run().
+var (
+	headerFlags  headerList
+	extraHeaders network.Headers
+)
+
+// headerList is a repeatable string flag.
+type headerList []string
+
+func (h *headerList) String() string { return strings.Join(*h, ", ") }
+func (h *headerList) Set(v string) error {
+	*h = append(*h, v)
+	return nil
+}
+
 func main() {
+	flag.Var(&headerFlags, "header", "extra HTTP header to send with every request, as 'Name: Value' (repeatable)")
 	flagenv.Parse()
 	flag.Parse()
 
@@ -53,6 +77,21 @@ func run() error {
 		return fmt.Errorf("invalid -slog-level %q: %w", *slogLevel, err)
 	}
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})))
+
+	// Parse -header flags into the map CDP wants. Do it up front so a malformed
+	// header fails fast rather than on the first capture.
+	extraHeaders = network.Headers{}
+	for _, h := range headerFlags {
+		name, val, ok := strings.Cut(h, ":")
+		if !ok {
+			return fmt.Errorf("invalid -header %q: want 'Name: Value'", h)
+		}
+		name, val = strings.TrimSpace(name), strings.TrimSpace(val)
+		if name == "" {
+			return fmt.Errorf("invalid -header %q: empty name", h)
+		}
+		extraHeaders[name] = val
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -93,6 +132,8 @@ func run() error {
 		"target-url", *targetURL,
 		"out-dir", *outDir,
 		"interval", interval.String(),
+		"headers", len(extraHeaders),
+		"expect-text", *expectText,
 	)
 
 	if *interval <= 0 {
@@ -132,7 +173,8 @@ func run() error {
 
 // capture opens a fresh tab, loads the target URL, screenshots the frame, and
 // writes it to out-dir as a PNG named for the detected Chrome version. It returns
-// the path written.
+// the path written. With -header set, every request carries the extra headers;
+// with -expect-text set, it waits for that text to appear before screenshotting.
 func capture(parent context.Context, version string) (string, error) {
 	ctx, cancel := context.WithTimeout(parent, *timeout)
 	defer cancel()
@@ -140,18 +182,31 @@ func capture(parent context.Context, version string) (string, error) {
 	tabCtx, cancelTab := chromedp.NewContext(ctx)
 	defer cancelTab()
 
-	actions := make([]chromedp.Action, 0, 3)
-	if *width > 0 && *height > 0 {
-		actions = append(actions, chromedp.EmulateViewport(int64(*width), int64(*height)))
+	// Set extra headers (needs the Network domain enabled) and viewport, then load.
+	setup := make([]chromedp.Action, 0, 4)
+	if len(extraHeaders) > 0 {
+		setup = append(setup, network.Enable(), network.SetExtraHTTPHeaders(extraHeaders))
 	}
-	var buf []byte
-	actions = append(actions,
-		chromedp.Navigate(*targetURL),
-		chromedp.FullScreenshot(&buf, 100),
-	)
+	if *width > 0 && *height > 0 {
+		setup = append(setup, chromedp.EmulateViewport(int64(*width), int64(*height)))
+	}
+	setup = append(setup, chromedp.Navigate(*targetURL))
+	if err := chromedp.Run(tabCtx, setup...); err != nil {
+		return "", fmt.Errorf("loading %s: %w", *targetURL, err)
+	}
 
-	if err := chromedp.Run(tabCtx, actions...); err != nil {
-		return "", fmt.Errorf("capturing %s: %w", *targetURL, err)
+	// Optionally wait for the backend to render the expected text (e.g. a header
+	// echoed by httpdebug). This also rides out an interstitial like Anubis, which
+	// navigates to the real backend only after its challenge is solved.
+	if *expectText != "" {
+		if err := waitForText(tabCtx, *expectText); err != nil {
+			return "", err
+		}
+	}
+
+	var buf []byte
+	if err := chromedp.Run(tabCtx, chromedp.FullScreenshot(&buf, 100)); err != nil {
+		return "", fmt.Errorf("screenshotting %s: %w", *targetURL, err)
 	}
 
 	// The version leads the name; a timestamp keeps interval runs from clobbering
@@ -162,6 +217,31 @@ func capture(parent context.Context, version string) (string, error) {
 		return "", fmt.Errorf("writing %s: %w", path, err)
 	}
 	return path, nil
+}
+
+// waitForText blocks until the tab's rendered text contains want, or ctx is
+// done. It re-evaluates each tick rather than injecting a one-shot observer, so
+// it survives the page navigating out from under it (e.g. an interstitial handing
+// off to the real backend). A transient evaluation error mid-navigation is
+// treated as "not yet" and retried.
+func waitForText(ctx context.Context, want string) error {
+	tick := time.NewTicker(250 * time.Millisecond)
+	defer tick.Stop()
+
+	for {
+		var txt string
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`document.documentElement.innerText`, &txt)); err == nil {
+			if strings.Contains(txt, want) {
+				return nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("timed out after %s waiting for %q in %s: %w", timeout.String(), want, *targetURL, ctx.Err())
+		case <-tick.C:
+		}
+	}
 }
 
 // chromeVersion pulls the version number out of a CDP product string such as
