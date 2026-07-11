@@ -3,6 +3,14 @@
 # The base image is chosen to be contemporary with the Chrome build so the deb's
 # declared dependencies resolve against packages that actually existed then.
 #
+# Layering, fastest-to-rebuild first. Everything above the CHROME_DEB_URL ARG is
+# identical for every Chrome version in this era, so Docker serves it from cache and
+# a new Chrome build only re-runs the final deb layer:
+#   1. base tooling + fonts + socat
+#   2. Chrome's full shared-library dependency closure (the slow one — see below)
+#   3. tini, the runtime user, the entrypoint
+#   4. the actual, per-version Chrome deb   <-- only this re-runs per version
+#
 # Build:
 #   docker build -f docker/Dockerfile.ubuntu-26.04 \
 #     --build-arg CHROME_DEB_URL=https://chrome-archive.t3.tigrisfiles.io/chrome/140/google-chrome-stable_140.0.7339.207-1_amd64.deb \
@@ -10,34 +18,38 @@
 #     -t ghcr.io/techarohq/gubal/chrome:140 .
 FROM ubuntu:26.04
 
-ARG CHROME_DEB_URL
-ARG CHROME_DEB_SHA256=""
-
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Base tooling — curl/ca-certificates fetch the debs below, socat is the CDP bridge,
+# and the fonts render CJK/emoji. Version-independent, so it stays cached.
 RUN set -eux; \
-    test -n "${CHROME_DEB_URL}"; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl; \
-    curl -fsSL "${CHROME_DEB_URL}" -o /tmp/chrome.deb; \
-    if [ -n "${CHROME_DEB_SHA256}" ]; then \
-      echo "${CHROME_DEB_SHA256}  /tmp/chrome.deb" | sha256sum -c -; \
-    fi; \
     apt-get install -y --no-install-recommends \
-      /tmp/chrome.deb \
+      ca-certificates \
+      curl \
       socat \
       fonts-liberation \
       fonts-noto-cjk \
       fonts-noto-color-emoji; \
-    rm -f /tmp/chrome.deb; \
-    rm -rf /var/lib/apt/lists/*; \
-    # Sanity: the sandbox helper must stay root:root 4755 for CHROME_SANDBOX=on. \
-    ls -l /opt/google/chrome/chrome-sandbox
+    rm -rf /var/lib/apt/lists/*
 
-# Non-root runtime user. Do NOT chown /opt/google/chrome — that would clobber the
-# SUID bit on chrome-sandbox.
-RUN groupadd -r chrome && \
-    useradd -r -g chrome -G audio,video -m -d /home/chrome chrome
+# Warm Chrome's full shared-library dependency closure (libnss3, libgtk, libgbm, the
+# x11/xcb libs, ...). This is the slow, bandwidth-heavy step, and it is IDENTICAL for
+# every Chrome version in this era — so we resolve it once from a fixed, era-
+# representative Chrome deb rather than per version. CHROME_DEPS_DEB_URL has a
+# constant default, so changing CHROME_DEB_URL below does NOT invalidate this layer:
+# a new Chrome version then downloads only its own deb, never the dep tree again.
+# apt self-heals in the final layer if a later Chrome adds a dependency.
+#
+# Deriving the deps from a real deb (instead of a hand-written package list) keeps us
+# honest across Ubuntu's t64 library renames (libasound2 -> libasound2t64, etc.).
+ARG CHROME_DEPS_DEB_URL=https://chrome-archive.t3.tigrisfiles.io/chrome/140/google-chrome-stable_140.0.7339.207-1_amd64.deb
+RUN set -eux; \
+    curl -fsSL "${CHROME_DEPS_DEB_URL}" -o /tmp/chrome-deps.deb; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends /tmp/chrome-deps.deb; \
+    rm -f /tmp/chrome-deps.deb; \
+    rm -rf /var/lib/apt/lists/*
 
 # tini isn't packaged for older Ubuntu (e.g. 18.04), so fetch the static release
 # binary for a uniform init across every era. amd64 only — the Chrome debs are too.
@@ -48,8 +60,32 @@ RUN set -eux; \
     echo "${TINI_SHA256}  /usr/local/bin/tini" | sha256sum -c -; \
     chmod +x /usr/local/bin/tini
 
+# Non-root runtime user. Do NOT chown /opt/google/chrome — that would clobber the
+# SUID bit on chrome-sandbox.
+RUN groupadd -r chrome && \
+    useradd -r -g chrome -G audio,video -m -d /home/chrome chrome
+
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Per-Chrome-version layer — the only one that re-runs per version. Its dependency
+# closure is already installed above, so apt fetches just the Chrome deb itself
+# (plus any dep a newer Chrome added). The ARGs live here so a new URL invalidates
+# only this layer and the cheap metadata below.
+ARG CHROME_DEB_URL
+ARG CHROME_DEB_SHA256=""
+RUN set -eux; \
+    test -n "${CHROME_DEB_URL}"; \
+    curl -fsSL "${CHROME_DEB_URL}" -o /tmp/chrome.deb; \
+    if [ -n "${CHROME_DEB_SHA256}" ]; then \
+      echo "${CHROME_DEB_SHA256}  /tmp/chrome.deb" | sha256sum -c -; \
+    fi; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends /tmp/chrome.deb; \
+    rm -f /tmp/chrome.deb; \
+    rm -rf /var/lib/apt/lists/*; \
+    # Sanity: the sandbox helper must stay root:root 4755 for CHROME_SANDBOX=on. \
+    ls -l /opt/google/chrome/chrome-sandbox
 
 USER chrome
 WORKDIR /home/chrome
