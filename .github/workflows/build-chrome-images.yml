@@ -46,3 +46,9 @@ jobs:
           ONLY: ${{ inputs.only }}
           PUSH: ${{ inputs.push }}
           REGISTRY: ghcr.io/techarohq/gubal/chrome
+          # TEMPORARY: fetch the manifest and debs from the uncached origin endpoint
+          # instead of the default chrome-archive.t3.tigrisfiles.io CDN. The t3 edge
+          # cache pinned a truncated Chrome 140 deb (and a stale manifest.json) and
+          # would not invalidate, which breaks every 26.04-era build. Remove this once
+          # the Tigris cache bug is resolved. See docs/chrome-140-cache-divergence.md.
+          CHROME_BUCKET_URL: https://chrome-archive.fly.storage.tigris.dev

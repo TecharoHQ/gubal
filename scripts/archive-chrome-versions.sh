@@ -14,13 +14,23 @@
 # the source of truth for what's in the bucket (i.e. this script is the only
 # writer); a new patch level yields a new key and is fetched normally.
 #
-# Sources tried in order per version:
+# Version discovery (which patch level exists for each major) tries, in order:
 #   1. NDViet/google-chrome-stable GitHub releases (majors 144-150, current
 #      official debs published per browser-matrix.yml)
-#   2. UChicago mirror (has v71+, reliable, official Google debs)
+#   2. UChicago mirror (has v71+, official Google debs)
 #   3. webnicer/chrome-downloads on GitHub (has v48+, fills the v66-70 gap)
 #
+# For the actual bytes, each discovered filename is fetched from Google's
+# authoritative repo (dl.google.com) FIRST, then from the discovered source as a
+# fallback. Google's pool only keeps a rolling window of recent versions, so older
+# majors 404 there and fall through to the archive mirrors. Every download must
+# pass validate_deb() — a size floor plus an ar-magic / dpkg-deb integrity check —
+# so truncated stubs or 404 HTML pages that some mirrors serve with a 200 status
+# (e.g. UChicago served a 122880-byte partial for 140.0.7339.207) are rejected
+# instead of being archived.
+#
 # Requirements: curl, jq, aws-cli (configured for Tigris), sha256sum
+#               dpkg-deb (optional; strengthens the truncation check when present)
 #
 # Tigris auth: this script uses the `aws` CLI pointed at Tigris' S3-compatible
 # endpoint. Set these before running (or use `aws configure` / env vars):
@@ -47,13 +57,44 @@ EXISTING_MANIFEST="${WORKDIR}/existing_manifest.json"
 touch "${MANIFEST}"
 trap 'rm -rf "${WORKDIR}"' EXIT
 
+GOOGLE_BASE="https://dl.google.com/linux/chrome/deb/pool/main/g/google-chrome-stable"
 UCHICAGO_BASE="https://mirror.cs.uchicago.edu/google-chrome/pool/main/g/google-chrome-stable"
 WEBNICER_BASE="https://raw.githubusercontent.com/webnicer/chrome-downloads/master/x64.deb"
 NDVIET_REPO="NDViet/google-chrome-stable"
 NDVIET_MIN_MAJOR=144
 NDVIET_MAX_MAJOR=150
 
+# Real Chrome stable amd64 debs are ~110-125 MB. Anything well below this is a
+# truncated upload or an error page a mirror served with a 200 status.
+MIN_DEB_BYTES=40000000
+
 log() { echo "[$(date -u +%H:%M:%S)] $*" >&2; }
+
+# validate_deb <path> — succeed only if the file looks like a complete Chrome
+# .deb. Enforces a size floor and the Debian ar magic (portable, no deps), and
+# when dpkg-deb is available also reads the data member, which catches partial
+# truncations that clear the size floor. This is the guard that keeps a mirror's
+# truncated stub (e.g. 122880 bytes for 140.0.7339.207) out of the archive.
+validate_deb() {
+	local f="$1" size
+	[[ -f "${f}" ]] || return 1
+	size="$(stat -c%s "${f}")"
+	if [[ "${size}" -lt "${MIN_DEB_BYTES}" ]]; then
+		log "    reject: ${size} bytes is below the ${MIN_DEB_BYTES}-byte floor (truncated or error page)"
+		return 1
+	fi
+	if [[ "$(head -c 7 "${f}")" != "!<arch>" ]]; then
+		log "    reject: missing Debian ar magic (not a .deb)"
+		return 1
+	fi
+	if command -v dpkg-deb >/dev/null 2>&1; then
+		if ! dpkg-deb --contents "${f}" >/dev/null 2>&1; then
+			log "    reject: dpkg-deb cannot read the archive (truncated/corrupt)"
+			return 1
+		fi
+	fi
+	return 0
+}
 
 # Pull the existing manifest so we can upsert: already-archived keys are skipped
 # and surviving entries are merged back in at the end. Missing manifest (first
@@ -149,6 +190,20 @@ for major in $(seq "${MIN_MAJOR}" "${MAX_MAJOR}"); do
 
 	key="chrome/${major}/${fname}"
 
+	# HACK(2026-07-11): Chrome 140 is stored under its sha256 as the object key
+	# instead of its canonical filename. The Tigris t3.tigrisfiles.io edge cache
+	# pinned a truncated 122880-byte copy at the canonical
+	# chrome/140/google-chrome-stable_140.0.7339.207-1_amd64.deb path and would not
+	# invalidate on overwrite or on delete+reupload, so the good bytes were moved to
+	# a never-cached key. This override keeps re-archive runs from recreating (and
+	# re-poisoning) the canonical key; the manifest 'filename' stays canonical so the
+	# build can still parse the version. Remove once the Tigris cache bug is fixed.
+	# See docs/chrome-140-cache-divergence.md.
+	if [[ "${major}" == "140" && "${fname}" == "google-chrome-stable_140.0.7339.207-1_amd64.deb" ]]; then
+		key="chrome/140/e60d2df8410925e22d8ea2a24e9a79a84fdb9062a4c6f3af2dac61e630833ecb.deb"
+		log "  HACK: 140 stored under sha256 key (${key}); see docs/chrome-140-cache-divergence.md"
+	fi
+
 	# Upsert: if this exact key is already recorded, leave it be. Its entry stays
 	# in EXISTING_MANIFEST and is merged back in at the end.
 	if [[ "$(jq --arg key "${key}" 'any(.[]; .tigris_key == $key)' "${EXISTING_MANIFEST}")" == "true" ]]; then
@@ -157,16 +212,38 @@ for major in $(seq "${MIN_MAJOR}" "${MAX_MAJOR}"); do
 	fi
 
 	dest="${WORKDIR}/${fname}"
-	log "  Downloading ${fname} from ${src}"
-	if ! curl -fsSL "${src}" -o "${dest}"; then
-		log "  Download failed for major ${major}, skipping."
+
+	# Fetch the bytes for this filename from Google's authoritative repo first,
+	# then from the source discovered above. Each candidate must download AND pass
+	# validate_deb(); a truncated body or 404 page is rejected and we fall through
+	# to the next candidate. Google 404s for versions outside its rolling window,
+	# so older majors are served from the archive mirrors as before.
+	google_src="${GOOGLE_BASE}/${fname}"
+	used_src=""
+	for candidate in "${google_src}" "${src}"; do
+		[[ -n "${candidate}" ]] || continue
+		log "  Trying ${candidate}"
+		if ! curl -fsSL "${candidate}" -o "${dest}"; then
+			log "    download failed (HTTP error)"
+			rm -f "${dest}"
+			continue
+		fi
+		if validate_deb "${dest}"; then
+			used_src="${candidate}"
+			break
+		fi
+		rm -f "${dest}"
+	done
+
+	if [[ -z "${used_src}" ]]; then
+		log "  No valid .deb for major ${major} from any source — skipping."
 		continue
 	fi
 
 	size="$(stat -c%s "${dest}")"
 	sha256="$(sha256sum "${dest}" | awk '{print $1}')"
 
-	log "  sha256=${sha256} size=${size}"
+	log "  sha256=${sha256} size=${size} src=${used_src}"
 	log "  Uploading to s3://${BUCKET}/${key}"
 	aws s3 cp "${dest}" "s3://${BUCKET}/${key}" \
 		--endpoint-url "${TIGRIS_ENDPOINT}" \
@@ -177,7 +254,7 @@ for major in $(seq "${MIN_MAJOR}" "${MAX_MAJOR}"); do
 		--arg filename "${fname}" \
 		--arg sha256 "${sha256}" \
 		--arg size "${size}" \
-		--arg source "${src}" \
+		--arg source "${used_src}" \
 		--arg key "${key}" \
 		--arg uploaded_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		'{major: ($major|tonumber), filename: $filename, sha256: $sha256, size: ($size|tonumber), source: $source, tigris_key: $key, uploaded_at: $uploaded_at}' \
