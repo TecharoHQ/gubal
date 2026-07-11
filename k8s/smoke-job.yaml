@@ -1,0 +1,40 @@
+# One-shot proving Job: connect to the Chrome CDP Service, print /json/version, and
+# assert the reported User-Agent does NOT advertise "Headless". Exit non-zero on fail.
+#
+# Carries role=chrome-controller so networkpolicy.yaml lets it reach port 9222.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: chrome-smoke
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels: { role: chrome-controller }
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: smoke
+          image: curlimages/curl:8.8.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              # Chrome's DevTools rejects DNS-name Host headers (anti DNS-rebinding),
+              # so we reach the Service by name but send an accepted Host header.
+              echo "waiting for chrome:9222 ..."
+              for i in $(seq 1 30); do
+                if curl -fsS -H "Host: localhost:9222" \
+                     "http://chrome:9222/json/version" -o /tmp/v.json; then break; fi
+                sleep 2
+              done
+              cat /tmp/v.json; echo
+              ua=$(sed -n 's/.*"User-Agent": *"\([^"]*\)".*/\1/p' /tmp/v.json)
+              echo "User-Agent: ${ua}"
+              case "${ua}" in
+                *Headless*) echo "FAIL: User-Agent leaks Headless"; exit 1 ;;
+                *Chrome/*)  echo "PASS: driveable, non-Headless UA"; exit 0 ;;
+                *)          echo "FAIL: unexpected/empty User-Agent"; exit 1 ;;
+              esac

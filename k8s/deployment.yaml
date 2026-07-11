@@ -1,0 +1,77 @@
+# Long-running headless Chrome as a CDP server, isolated with Kata Containers.
+#
+# Swap the image tag to prove a different Chrome version. Drive it from a controller
+# pod (puppeteer/playwright) at ws://chrome:9222 — never expose 9222 off-cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chrome
+  labels: { app: chrome }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: chrome }
+  template:
+    metadata:
+      labels: { app: chrome }
+    spec:
+      # Kata is the real trust boundary here (a VM per pod). Ancient Chrome's own
+      # sandbox has unpatched escape CVEs, so we lean on Kata + --no-sandbox instead.
+      runtimeClassName: kata
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: chrome
+          image: ghcr.io/techarohq/gubal/chrome:120   # <-- set the version to prove
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: cdp
+              containerPort: 9222
+          env:
+            - { name: CHROME_SANDBOX, value: "off" }   # Kata is the boundary
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: "500m", memory: "512Mi" }
+            limits:   { cpu: "2",    memory: "2Gi" }
+          # Chrome's DevTools rejects DNS-name Host headers; force an accepted one.
+          readinessProbe:
+            httpGet:
+              path: /json/version
+              port: cdp
+              httpHeaders: [{ name: Host, value: "localhost:9222" }]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /json/version
+              port: cdp
+              httpHeaders: [{ name: Host, value: "localhost:9222" }]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          volumeMounts:
+            - { name: dshm, mountPath: /dev/shm }
+      volumes:
+        # Chrome needs more than the default 64Mi of shared memory. The entrypoint
+        # also passes --disable-dev-shm-usage as a belt-and-suspenders fallback.
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chrome
+  labels: { app: chrome }
+spec:
+  selector: { app: chrome }
+  ports:
+    - name: cdp
+      port: 9222
+      targetPort: cdp

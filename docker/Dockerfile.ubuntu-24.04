@@ -1,0 +1,61 @@
+# Chrome era image — Ubuntu 24.04 (Chrome major 120-139, ~2024-2025).
+#
+# The base image is chosen to be contemporary with the Chrome build so the deb's
+# declared dependencies resolve against packages that actually existed then.
+#
+# Build:
+#   docker build -f docker/Dockerfile.ubuntu-24.04 \
+#     --build-arg CHROME_DEB_URL=https://chrome-archive.t3.tigrisfiles.io/chrome/120/google-chrome-stable_120.0.6099.109-1_amd64.deb \
+#     --build-arg CHROME_DEB_SHA256=<sha256> \
+#     -t ghcr.io/techarohq/gubal/chrome:120 .
+FROM ubuntu:24.04
+
+ARG CHROME_DEB_URL
+ARG CHROME_DEB_SHA256=""
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN set -eux; \
+    test -n "${CHROME_DEB_URL}"; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl; \
+    curl -fsSL "${CHROME_DEB_URL}" -o /tmp/chrome.deb; \
+    if [ -n "${CHROME_DEB_SHA256}" ]; then \
+      echo "${CHROME_DEB_SHA256}  /tmp/chrome.deb" | sha256sum -c -; \
+    fi; \
+    apt-get install -y --no-install-recommends \
+      /tmp/chrome.deb \
+      socat \
+      fonts-liberation \
+      fonts-noto-cjk \
+      fonts-noto-color-emoji; \
+    rm -f /tmp/chrome.deb; \
+    rm -rf /var/lib/apt/lists/*; \
+    # Sanity: the sandbox helper must stay root:root 4755 for CHROME_SANDBOX=on. \
+    ls -l /opt/google/chrome/chrome-sandbox
+
+# Non-root runtime user. Do NOT chown /opt/google/chrome — that would clobber the
+# SUID bit on chrome-sandbox.
+RUN groupadd -r chrome && \
+    useradd -r -g chrome -G audio,video -m -d /home/chrome chrome
+
+# tini isn't packaged for older Ubuntu (e.g. 18.04), so fetch the static release
+# binary for a uniform init across every era. amd64 only — the Chrome debs are too.
+ARG TINI_VERSION=v0.19.0
+ARG TINI_SHA256=c5b0666b4cb676901f90dfcb37106783c5fe2077b04590973b885950611b30ee
+RUN set -eux; \
+    curl -fsSL "https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-static-amd64" -o /usr/local/bin/tini; \
+    echo "${TINI_SHA256}  /usr/local/bin/tini" | sha256sum -c -; \
+    chmod +x /usr/local/bin/tini
+
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+USER chrome
+WORKDIR /home/chrome
+EXPOSE 9222
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=5 \
+  CMD curl -fsS "http://127.0.0.1:${CHROME_DEBUG_PORT:-9222}/json/version" >/dev/null || exit 1
+
+ENTRYPOINT ["/usr/local/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
