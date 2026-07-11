@@ -166,6 +166,26 @@ func loadJob(path, namespace string) (*batchv1.Job, error) {
 // EnsureCollector creates (idempotently) a long-lived busybox pod that mounts the
 // frames PVC read-only, so CopyFrame can pull files off it, and waits for Running.
 func (c *Cluster) EnsureCollector(ctx context.Context, name, pvc string, timeout time.Duration) error {
+	err := c.cs.CoreV1().Pods(c.ns).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("deleting stale collector: %w", err)
+	}
+	if err == nil {
+		if werr := wait.PollUntilContextTimeout(ctx, time.Second, timeout, true,
+			func(ctx context.Context) (bool, error) {
+				_, gerr := c.cs.CoreV1().Pods(c.ns).Get(ctx, name, metav1.GetOptions{})
+				if apierrors.IsNotFound(gerr) {
+					return true, nil
+				}
+				if gerr != nil {
+					return false, gerr
+				}
+				return false, nil
+			}); werr != nil {
+			return fmt.Errorf("waiting for stale collector to clear: %w", werr)
+		}
+	}
+
 	ro := true
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.ns},
@@ -189,7 +209,7 @@ func (c *Cluster) EnsureCollector(ctx context.Context, name, pvc string, timeout
 			}},
 		},
 	}
-	_, err := c.cs.CoreV1().Pods(c.ns).Create(ctx, pod, metav1.CreateOptions{})
+	_, err = c.cs.CoreV1().Pods(c.ns).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil && !apierrors.IsAlreadyExists(err) {
 		return fmt.Errorf("creating collector: %w", err)
 	}
