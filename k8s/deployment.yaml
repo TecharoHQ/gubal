@@ -20,25 +20,27 @@ spec:
       runtimeClassName: kata
       automountServiceAccountToken: false
       securityContext:
-        runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+        # Own the chrome-bully PVC as gid 10001 so its non-root user can write
+        # captured frames. Harmless for the other containers' emptyDir mounts.
+        fsGroup: 993
       containers:
         - name: chrome
-          image: ghcr.io/techarohq/gubal/chrome:120   # <-- set the version to prove
+          image: ghcr.io/techarohq/gubal/chrome:150 # <-- set the version to prove
           imagePullPolicy: IfNotPresent
           ports:
             - name: cdp
               containerPort: 9222
           env:
-            - { name: CHROME_SANDBOX, value: "off" }   # Kata is the boundary
+            - { name: CHROME_SANDBOX, value: "off" } # Kata is the boundary
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
           resources:
             requests: { cpu: "500m", memory: "512Mi" }
-            limits:   { cpu: "2",    memory: "2Gi" }
+            limits: { cpu: "2", memory: "2Gi" }
           # Chrome's DevTools rejects DNS-name Host headers; force an accepted one.
           readinessProbe:
             httpGet:
@@ -56,6 +58,46 @@ spec:
             periodSeconds: 15
           volumeMounts:
             - { name: dshm, mountPath: /dev/shm }
+        # Sidecar: reflects back HTTP requests for debugging. Shares the pod
+        # network namespace, so it can also reach Chrome's CDP at localhost:9222.
+        - name: httpdebug
+          image: ghcr.io/xe/x/httpdebug:latest
+          imagePullPolicy: Always
+          env:
+            - { name: PORT, value: "8080" }
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: "10m", memory: "16Mi" }
+            limits: { cpu: "100m", memory: "64Mi" }
+        # Controller: drives Chrome over CDP and screenshots the httpdebug frame.
+        # In-pod, so it reaches CDP at localhost:9222 (Host header "localhost" —
+        # the DNS-rebind check that blocks the Service name is satisfied) and the
+        # httpdebug sidecar at localhost:8080. Frames land on its own PVC.
+        - name: chrome-bully
+          image: ghcr.io/techarohq/gubal/chrome-bully:latest
+          imagePullPolicy: Always
+          args:
+            - -cdp-url=http://localhost:9222
+            - -target-url=http://localhost:8080
+            - -out-dir=/data
+            - -interval=30s
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 997
+            runAsGroup: 993
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+          volumeMounts:
+            - { name: bully-data, mountPath: /data }
       volumes:
         # Chrome needs more than the default 64Mi of shared memory. The entrypoint
         # also passes --disable-dev-shm-usage as a belt-and-suspenders fallback.
@@ -63,6 +105,23 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 1Gi
+        - name: bully-data
+          persistentVolumeClaim:
+            claimName: chrome-bully-data
+---
+# Durable home for the frames chrome-bully writes. ReadWriteOnce is fine: only
+# the single chrome pod mounts it (replicas: 1).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chrome-bully-data
+  labels: { app: chrome }
+spec:
+  accessModes: ["ReadWriteMany"]
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: itsuki
 ---
 apiVersion: v1
 kind: Service

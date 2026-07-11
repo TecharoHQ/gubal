@@ -1,0 +1,43 @@
+# chrome-bully controller image.
+#
+# Two stages: a "fat" builder carrying the full Go toolchain compiles a static
+# binary, and a "thin" runtime is bare Alpine with just the binary + CA certs +
+# tini. Nothing from the toolchain ships to production.
+#
+# Build (from the repo root, so the whole module is in context):
+#   docker build -f docker/Dockerfile.chrome-bully \
+#     -t ghcr.io/techarohq/gubal/chrome-bully:latest .
+
+# ---- build stage (fat) -------------------------------------------------------
+FROM golang:1.26-alpine AS build
+
+WORKDIR /src
+
+# Resolve modules first so this layer caches unless go.mod/go.sum change.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# Static, stripped binary — no libc, so it runs on scratch/Alpine unchanged.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o /out/chrome-bully ./cmd/chrome-bully
+
+# ---- runtime stage (thin) ----------------------------------------------------
+FROM alpine:3.20
+
+# tini reaps zombies (Chrome tabs churn processes on the other end); ca-certs let
+# it dial https targets. A fixed non-root uid/gid pairs with the k8s securityContext.
+RUN apk add --no-cache ca-certificates tini \
+ && addgroup -S -g 10001 bully \
+ && adduser -S -u 10001 -G bully -h /home/bully bully \
+ && mkdir -p /data \
+ && chown bully:bully /data
+
+COPY --from=build /out/chrome-bully /usr/local/bin/chrome-bully
+
+USER bully
+WORKDIR /home/bully
+VOLUME ["/data"]
+
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/chrome-bully"]
