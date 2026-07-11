@@ -35,6 +35,48 @@ spec:
               echo "User-Agent: ${ua}"
               case "${ua}" in
                 *Headless*) echo "FAIL: User-Agent leaks Headless"; exit 1 ;;
-                *Chrome/*)  echo "PASS: driveable, non-Headless UA"; exit 0 ;;
+                *Chrome/*)  echo "PASS: driveable, non-Headless UA" ;;
                 *)          echo "FAIL: unexpected/empty User-Agent"; exit 1 ;;
               esac
+
+              # Anubis is up and serving its challenge. Public hostname -> valid
+              # Let's Encrypt cert (no -k), routed to the in-cluster ClusterIP.
+              echo "checking Anubis at anubis-ci.alrest.cetacean.club ..."
+              code=$(curl -sS -o /tmp/anubis.html -w '%{http_code}' \
+                       https://anubis-ci.alrest.cetacean.club/ || echo 000)
+              echo "Anubis HTTP ${code}"
+              [ "${code}" = "200" ] || { echo "FAIL: Anubis not 200"; exit 1; }
+              grep -qi anubis /tmp/anubis.html \
+                && echo "PASS: Anubis is serving its challenge" \
+                || { echo "FAIL: response is not Anubis"; exit 1; }
+        # Controller: drives Chrome over CDP (the chrome Service, Host "localhost"
+        # satisfies DevTools' DNS-rebind check) and points it at the Anubis
+        # endpoint, so Chrome loads the challenge through Anubis and screenshots
+        # the result. Proves the non-Headless image can transit Anubis. Chrome's
+        # egress to Anubis is opened in networkpolicy.yaml. Frames land on the PVC.
+        - name: chrome-bully
+          image: ghcr.io/techarohq/gubal/chrome-bully:latest
+          imagePullPolicy: Always
+          args:
+            - -cdp-url=http://chrome:9222
+            - -target-url=https://anubis-ci.alrest.cetacean.club
+            # Driving Chrome through Anubis (challenge solve + redirect + backend
+            # render) can exceed the 30s default; give it margin so a single slow
+            # attempt doesn't rely on the Job's backoffLimit retry.
+            - -capture-timeout=90s
+            - -out-dir=/data
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 997
+            runAsGroup: 993
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+          volumeMounts:
+            - { name: bully-data, mountPath: /data }
+      volumes:
+        - name: bully-data
+          persistentVolumeClaim:
+            claimName: chrome-bully-data

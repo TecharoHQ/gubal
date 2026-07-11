@@ -16,8 +16,17 @@ spec:
       ports:
         - { protocol: TCP, port: 9222 }
   egress:
-    # DNS only. Add explicit rules if a proving run must reach specific test targets.
+    # DNS to anywhere, so Chrome can resolve test targets (incl. Anubis's hostname).
     - to: []
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
+    # Let Chrome reach Anubis (same namespace) so a controller can drive Chrome
+    # through the challenge. 8443 is the relayd container port the Service's :443
+    # DNATs to; 443 covers CNIs that enforce egress before DNAT.
+    - to:
+        - podSelector:
+            matchLabels: { app: anubis }
+      ports:
+        - { protocol: TCP, port: 8443 }
+        - { protocol: TCP, port: 443 }
