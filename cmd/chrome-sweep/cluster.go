@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,11 +10,12 @@ import (
 	"path/filepath"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/yaml"
@@ -27,18 +29,6 @@ type Cluster struct {
 
 func NewCluster(cs kubernetes.Interface, namespace string) *Cluster {
 	return &Cluster{cs: cs, ns: namespace}
-}
-
-// SetImage strategic-merge-patches one container's image on a Deployment.
-func (c *Cluster) SetImage(ctx context.Context, deployment, container, image string) error {
-	patch := []byte(fmt.Sprintf(
-		`{"spec":{"template":{"spec":{"containers":[{"name":%q,"image":%q}]}}}}`, container, image))
-	_, err := c.cs.AppsV1().Deployments(c.ns).Patch(
-		ctx, deployment, types.StrategicMergePatchType, patch, metav1.PatchOptions{})
-	if err != nil {
-		return fmt.Errorf("patching %s image: %w", deployment, err)
-	}
-	return nil
 }
 
 // WaitDeploymentReady blocks until the Deployment's newest generation is fully
@@ -63,6 +53,21 @@ func (c *Cluster) WaitDeploymentReady(ctx context.Context, deployment string, ti
 		})
 }
 
+// waitGone polls until get reports the object is NotFound.
+func waitGone(ctx context.Context, timeout time.Duration, get func(context.Context) error) error {
+	return wait.PollUntilContextTimeout(ctx, time.Second, timeout, true,
+		func(ctx context.Context) (bool, error) {
+			err := get(ctx)
+			if apierrors.IsNotFound(err) {
+				return true, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			return false, nil
+		})
+}
+
 // ReplaceJob deletes any existing Job of the same name (waiting for it to fully
 // disappear) and creates the given one.
 func (c *Cluster) ReplaceJob(ctx context.Context, job *batchv1.Job) error {
@@ -72,17 +77,10 @@ func (c *Cluster) ReplaceJob(ctx context.Context, job *batchv1.Job) error {
 		return fmt.Errorf("deleting old job: %w", err)
 	}
 	if err == nil {
-		if werr := wait.PollUntilContextTimeout(ctx, time.Second, 2*time.Minute, true,
-			func(ctx context.Context) (bool, error) {
-				_, gerr := c.cs.BatchV1().Jobs(c.ns).Get(ctx, job.Name, metav1.GetOptions{})
-				if apierrors.IsNotFound(gerr) {
-					return true, nil
-				}
-				if gerr != nil {
-					return false, gerr
-				}
-				return false, nil
-			}); werr != nil {
+		if werr := waitGone(ctx, 2*time.Minute, func(ctx context.Context) error {
+			_, e := c.cs.BatchV1().Jobs(c.ns).Get(ctx, job.Name, metav1.GetOptions{})
+			return e
+		}); werr != nil {
 			return fmt.Errorf("waiting for old job to clear: %w", werr)
 		}
 	}
@@ -91,6 +89,97 @@ func (c *Cluster) ReplaceJob(ctx context.Context, job *batchv1.Job) error {
 		return fmt.Errorf("creating job: %w", err)
 	}
 	return nil
+}
+
+// CreateOrReplaceDeployment deletes any existing Deployment of the same name
+// (waiting for it to clear) and creates the given one. Delete+create rather than
+// update because a Deployment's selector is immutable.
+func (c *Cluster) CreateOrReplaceDeployment(ctx context.Context, dep *appsv1.Deployment, timeout time.Duration) error {
+	dep.Namespace = c.ns
+	api := c.cs.AppsV1().Deployments(c.ns)
+	err := api.Delete(ctx, dep.Name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("deleting old deployment %s: %w", dep.Name, err)
+	}
+	if err == nil {
+		if werr := waitGone(ctx, timeout, func(ctx context.Context) error {
+			_, e := api.Get(ctx, dep.Name, metav1.GetOptions{})
+			return e
+		}); werr != nil {
+			return fmt.Errorf("waiting for old deployment %s to clear: %w", dep.Name, werr)
+		}
+	}
+	if _, err := api.Create(ctx, dep, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("creating deployment %s: %w", dep.Name, err)
+	}
+	return nil
+}
+
+// CreateOrReplaceService deletes any existing Service of the same name and creates
+// the given one.
+func (c *Cluster) CreateOrReplaceService(ctx context.Context, svc *corev1.Service, timeout time.Duration) error {
+	svc.Namespace = c.ns
+	api := c.cs.CoreV1().Services(c.ns)
+	err := api.Delete(ctx, svc.Name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("deleting old service %s: %w", svc.Name, err)
+	}
+	if err == nil {
+		if werr := waitGone(ctx, timeout, func(ctx context.Context) error {
+			_, e := api.Get(ctx, svc.Name, metav1.GetOptions{})
+			return e
+		}); werr != nil {
+			return fmt.Errorf("waiting for old service %s to clear: %w", svc.Name, werr)
+		}
+	}
+	if _, err := api.Create(ctx, svc, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("creating service %s: %w", svc.Name, err)
+	}
+	return nil
+}
+
+// CreateOrReplaceNetworkPolicy deletes any existing NetworkPolicy of the same name
+// and creates the given one.
+func (c *Cluster) CreateOrReplaceNetworkPolicy(ctx context.Context, np *networkingv1.NetworkPolicy, timeout time.Duration) error {
+	np.Namespace = c.ns
+	api := c.cs.NetworkingV1().NetworkPolicies(c.ns)
+	err := api.Delete(ctx, np.Name, metav1.DeleteOptions{})
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("deleting old networkpolicy %s: %w", np.Name, err)
+	}
+	if err == nil {
+		if werr := waitGone(ctx, timeout, func(ctx context.Context) error {
+			_, e := api.Get(ctx, np.Name, metav1.GetOptions{})
+			return e
+		}); werr != nil {
+			return fmt.Errorf("waiting for old networkpolicy %s to clear: %w", np.Name, werr)
+		}
+	}
+	if _, err := api.Create(ctx, np, metav1.CreateOptions{}); err != nil {
+		return fmt.Errorf("creating networkpolicy %s: %w", np.Name, err)
+	}
+	return nil
+}
+
+// DeleteVersionResources removes a version's Deployment, Service, NetworkPolicy
+// (<name>-lockdown), and Job (jobName). It tolerates already-absent resources and
+// returns the joined error of any real failures (best-effort teardown).
+func (c *Cluster) DeleteVersionResources(ctx context.Context, name, jobName string) error {
+	fg := metav1.DeletePropagationForeground
+	var errs []error
+	if err := c.cs.AppsV1().Deployments(c.ns).Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &fg}); err != nil && !apierrors.IsNotFound(err) {
+		errs = append(errs, err)
+	}
+	if err := c.cs.CoreV1().Services(c.ns).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		errs = append(errs, err)
+	}
+	if err := c.cs.NetworkingV1().NetworkPolicies(c.ns).Delete(ctx, name+"-lockdown", metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		errs = append(errs, err)
+	}
+	if err := c.cs.BatchV1().Jobs(c.ns).Delete(ctx, jobName, metav1.DeleteOptions{PropagationPolicy: &fg}); err != nil && !apierrors.IsNotFound(err) {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // WaitJob blocks until the Job reports Complete (succeeded=true) or Failed
