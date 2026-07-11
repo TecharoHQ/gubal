@@ -1,6 +1,8 @@
-// Command chrome-sweep tests a list of Chrome image tags one after another: it
-// re-points the in-cluster `chrome` Deployment at each tag, runs the existing
-// chrome-smoke Job against it, and records a pass/fail + screenshot per version.
+// Command chrome-sweep tests a list of Chrome image tags in bounded parallel: for
+// each tag it creates a per-version chrome Deployment/Service/NetworkPolicy and
+// smoke Job (all named chrome-<tag>), waits for rollout, runs the smoke Job,
+// records a pass/fail + screenshot, then tears the version's resources down. One
+// shared PVC collects every version's frames.
 package main
 
 import (
@@ -18,17 +20,21 @@ import (
 
 // Config is the fully-resolved run configuration.
 type Config struct {
-	Namespace    string
-	Deployment   string
-	Container    string
-	ImageRepo    string
-	JobManifest  string
-	JobName      string
-	CollectorPVC string
-	OutDir       string
-	ReadyTimeout time.Duration
-	JobTimeout   time.Duration
-	Versions     []string
+	Namespace             string
+	Deployment            string
+	Container             string
+	ImageRepo             string
+	JobManifest           string
+	JobName               string
+	DeploymentManifest    string
+	ServiceManifest       string
+	NetworkPolicyManifest string
+	Parallelism           int
+	CollectorPVC          string
+	OutDir                string
+	ReadyTimeout          time.Duration
+	JobTimeout            time.Duration
+	Versions              []string
 }
 
 func main() {
@@ -37,11 +43,15 @@ func main() {
 		cfg        = Config{}
 	)
 	flag.StringVar(&cfg.Namespace, "namespace", "ci", "namespace holding the chrome Deployment and smoke Job")
-	flag.StringVar(&cfg.Deployment, "deployment", "chrome", "Deployment to re-image per version")
+	flag.StringVar(&cfg.Deployment, "deployment", "chrome", "base name for per-version chrome resources (Deployment/Service/NetworkPolicy)")
 	flag.StringVar(&cfg.Container, "container", "chrome", "container within the Deployment to re-image")
 	flag.StringVar(&cfg.ImageRepo, "image-repo", "ghcr.io/techarohq/gubal/chrome", "image repository; final ref is <repo>:<tag>")
 	flag.StringVar(&cfg.JobManifest, "job-manifest", "k8s/smoke-job.yaml", "path to the smoke Job manifest to run each version")
-	flag.StringVar(&cfg.JobName, "job-name", "chrome-smoke", "metadata.name of the Job in the manifest")
+	flag.StringVar(&cfg.JobName, "job-name", "chrome-smoke", "base name for per-version smoke Jobs; per version appends -<tag>")
+	flag.StringVar(&cfg.DeploymentManifest, "deployment-manifest", "k8s/deployment.yaml", "base Deployment manifest to template per version")
+	flag.StringVar(&cfg.ServiceManifest, "service-manifest", "k8s/service.yaml", "base Service manifest to template per version")
+	flag.StringVar(&cfg.NetworkPolicyManifest, "networkpolicy-manifest", "k8s/networkpolicy.yaml", "base NetworkPolicy manifest to template per version")
+	flag.IntVar(&cfg.Parallelism, "parallelism", 8, "max number of versions tested concurrently")
 	flag.StringVar(&cfg.CollectorPVC, "pvc", "chrome-bully-data", "PVC that holds captured frames")
 	flag.StringVar(&cfg.OutDir, "out", "./var/sweep", "directory to write the report and copied frames into")
 	flag.DurationVar(&cfg.ReadyTimeout, "ready-timeout", 3*time.Minute, "max wait for a version's rollout to become Ready")
