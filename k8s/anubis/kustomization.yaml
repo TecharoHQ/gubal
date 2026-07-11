@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ci
+
+# Anubis has its own kustomization, independent of the chrome one in the parent
+# directory. Applied in stages — see README.md — because the DNSEndpoint in
+# certificate.yaml needs the ClusterIP the Service is assigned on first apply.
+resources:
+  - anubis.yaml
+  - certificate.yaml

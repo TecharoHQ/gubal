@@ -1,0 +1,37 @@
+# TLS cert for Anubis (issued via the letsencrypt-prod ClusterIssuer's DNS-01
+# solver, so it does not depend on the endpoint being reachable) plus the
+# externaldns A record. Cloned from the glance reference.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: anubis
+  namespace: ci
+spec:
+  secretName: anubis-tls
+
+  duration: 2160h # 90d
+  renewBefore: 360h # 15d
+
+  usages:
+    - digital signature
+    - key encipherment
+  dnsNames:
+    - anubis-ci.alrest.cetacean.club
+  issuerRef:
+    name: "letsencrypt-prod"
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: externaldns.k8s.io/v1alpha1
+kind: DNSEndpoint
+metadata:
+  name: anubis
+spec:
+  endpoints:
+    - dnsName: anubis-ci.alrest.cetacean.club
+      recordTTL: 3600
+      recordType: A
+      targets:
+        # Service's assigned ClusterIP (routable on the alrest network).
+        #   kubectl get svc anubis -n ci -o jsonpath='{.spec.clusterIP}'
+        - 10.214.60.22

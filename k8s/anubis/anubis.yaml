@@ -1,0 +1,127 @@
+# Anubis guarding its own httpdebug backend, TLS-terminated by relayd.
+#
+# One pod, three containers sharing a network namespace:
+#   relayd (:8443 TLS) -> anubis (:8080) -> httpdebug (:5000)
+# The Service exposes :443 -> relayd and :80 -> anubis (plaintext), mirroring the
+# glance reference. See README.md for the multi-stage apply (the DNSEndpoint needs
+# the ClusterIP this Service is assigned).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: anubis
+  labels: { app: anubis }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: anubis }
+  template:
+    metadata:
+      labels: { app: anubis }
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      volumes:
+        # relayd reads tls.crt / tls.key from here; populated by the Certificate.
+        - name: internal-certs
+          secret:
+            secretName: anubis-tls
+      containers:
+        # Backend being protected: reflects requests back for debugging. Anubis
+        # points at it on localhost:5000 (5000 so it doesn't collide with anubis
+        # on 8080 in the shared pod netns).
+        - name: httpdebug
+          image: ghcr.io/xe/x/httpdebug:latest
+          imagePullPolicy: Always
+          env:
+            - { name: BIND, value: ":5000" }
+          ports:
+            - name: http
+              containerPort: 5000
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: "10m", memory: "16Mi" }
+            limits: { cpu: "100m", memory: "64Mi" }
+        # Anubis: proof-of-work gate in front of httpdebug. PUBLIC_URL is left
+        # unset on purpose — setting it in this sidecar topology breaks redirect
+        # construction (redir=null). Signing key comes from the anubis-key secret
+        # (created out-of-band, see README).
+        - name: anubis
+          image: ghcr.io/techarohq/anubis:latest
+          imagePullPolicy: Always
+          env:
+            - { name: BIND, value: ":8080" }
+            - { name: DIFFICULTY, value: "4" }
+            - name: ED25519_PRIVATE_KEY_HEX
+              valueFrom:
+                secretKeyRef:
+                  name: anubis-key
+                  key: ED25519_PRIVATE_KEY_HEX
+            - { name: METRICS_BIND, value: ":9090" }
+            - { name: SERVE_ROBOTS_TXT, value: "true" }
+            - { name: TARGET, value: "http://localhost:5000" }
+            - { name: OG_PASSTHROUGH, value: "true" }
+            - { name: OG_EXPIRY_TIME, value: "24h" }
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: metrics
+              containerPort: 9090
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits: { cpu: "750m", memory: "256Mi" }
+        # relayd: terminates HTTPS on :8443 using the anubis-tls cert and proxies
+        # to anubis on localhost:8080. Exposed as the Service's :443.
+        - name: relayd
+          image: ghcr.io/xe/x/relayd:latest
+          imagePullPolicy: Always
+          env:
+            - { name: BIND, value: ":8443" }
+            - { name: PROXY_TO, value: "http://localhost:8080" }
+          ports:
+            - name: https
+              containerPort: 8443
+          volumeMounts:
+            - name: internal-certs
+              mountPath: /xe/pki
+              readOnly: true
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "500m", memory: "512Mi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: anubis
+  labels: { app: anubis }
+spec:
+  selector: { app: anubis }
+  ports:
+    # HTTPS only. Anubis must sit behind relayd: it rejects requests that lack the
+    # X-Real-Ip header (which relayd sets), so a plaintext :80 -> anubis path like
+    # glance's would just 500. relayd terminates TLS and injects the header.
+    - name: https
+      port: 443
+      targetPort: 8443
