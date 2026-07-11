@@ -47,9 +47,13 @@ RUN set -eux; \
 # The deb's postinst drops Google's apt source into the image; we delete it here so
 # the per-version layer's apt-get update doesn't fail on that unsigned repo.
 ARG CHROME_DEPS_DEB_URL=""
+ARG CHROME_DEPS_DEB_SHA256=""
 RUN set -eux; \
     if [ -n "${CHROME_DEPS_DEB_URL}" ]; then \
       curl -fsSL "${CHROME_DEPS_DEB_URL}" -o /tmp/chrome-deps.deb; \
+      if [ -n "${CHROME_DEPS_DEB_SHA256}" ]; then \
+        echo "${CHROME_DEPS_DEB_SHA256}  /tmp/chrome-deps.deb" | sha256sum -c -; \
+      fi; \
       apt-get update; \
       apt-get install -y --no-install-recommends /tmp/chrome-deps.deb; \
       rm -f /tmp/chrome-deps.deb; \

@@ -110,15 +110,16 @@ log "Manifest holds ${total} versions; registry=${REGISTRY}"
 # CHROME_DEPS_DEB_URL. We pick the LOWEST major present in each era: it's a real,
 # existing deb, its URL is stable as the manifest grows (so the layer stays cached),
 # and because targets are >= it, the final per-version install never downgrades.
-declare -A DEPS_KEY_FOR_UBUNTU DEPS_MAJOR_FOR_UBUNTU
-while IFS=$'\t' read -r d_major d_key; do
+declare -A DEPS_KEY_FOR_UBUNTU DEPS_MAJOR_FOR_UBUNTU DEPS_SHA_FOR_UBUNTU
+while IFS=$'\t' read -r d_major d_key d_sha; do
   d_ubuntu="$(ubuntu_for_major "${d_major}")"
   cur="${DEPS_MAJOR_FOR_UBUNTU[${d_ubuntu}]:-}"
   if [ -z "${cur}" ] || [ "${d_major}" -lt "${cur}" ]; then
     DEPS_MAJOR_FOR_UBUNTU[${d_ubuntu}]="${d_major}"
     DEPS_KEY_FOR_UBUNTU[${d_ubuntu}]="${d_key}"
+    DEPS_SHA_FOR_UBUNTU[${d_ubuntu}]="${d_sha}"
   fi
-done < <(jq -r '.[] | [.major, .tigris_key] | @tsv' "${MANIFEST}")
+done < <(jq -r '.[] | [.major, .tigris_key, .sha256] | @tsv' "${MANIFEST}")
 
 # --- Build loop -----------------------------------------------------------------
 
@@ -136,6 +137,7 @@ while IFS=$'\t' read -r major filename sha256 key; do
 
   deb_url="${BUCKET_URL}/${key}"
   deps_deb_url="${BUCKET_URL}/${DEPS_KEY_FOR_UBUNTU[${ubuntu}]}"
+  deps_deb_sha="${DEPS_SHA_FOR_UBUNTU[${ubuntu}]}"
   tag_full="${REGISTRY}:${full_version}"
   tag_major="${REGISTRY}:${major}"
 
@@ -149,6 +151,7 @@ while IFS=$'\t' read -r major filename sha256 key; do
     --build-arg "CHROME_DEB_URL=${deb_url}"
     --build-arg "CHROME_DEB_SHA256=${sha256}"
     --build-arg "CHROME_DEPS_DEB_URL=${deps_deb_url}"
+    --build-arg "CHROME_DEPS_DEB_SHA256=${deps_deb_sha}"
     -t "${tag_full}" -t "${tag_major}"
     "${REPO_ROOT}")
 
