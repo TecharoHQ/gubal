@@ -47,9 +47,10 @@ func loadBaseManifests(cfg Config) (baseManifests, error) {
 
 // Run tests each version in cfg.Versions in bounded parallel (cfg.Parallelism at
 // once) and returns a Report: one Result per version (in argument order) plus the
-// Anubis image they were tested against. A failure on one version is recorded and
-// does not stop the others.
-func Run(ctx context.Context, c *Cluster, cfg Config) (Report, error) {
+// Anubis image they were tested against. Captured frames are copied into framesDir
+// (a scratch dir the caller owns and bundles/cleans up). A failure on one version
+// is recorded and does not stop the others.
+func Run(ctx context.Context, c *Cluster, cfg Config, framesDir string) (Report, error) {
 	base, err := loadBaseManifests(cfg)
 	if err != nil {
 		return Report{}, err
@@ -83,7 +84,7 @@ func Run(ctx context.Context, c *Cluster, cfg Config) (Report, error) {
 		go func(i int, tag string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			results[i] = sweepOne(ctx, c, cfg, base, tag)
+			results[i] = sweepOne(ctx, c, cfg, base, tag, framesDir)
 		}(i, tag)
 	}
 	wg.Wait()
@@ -131,7 +132,7 @@ func prepareAnubis(ctx context.Context, c *Cluster, cfg Config) (image string, r
 	return cfg.AnubisImage, restore, nil
 }
 
-func sweepOne(ctx context.Context, c *Cluster, cfg Config, base baseManifests, tag string) Result {
+func sweepOne(ctx context.Context, c *Cluster, cfg Config, base baseManifests, tag, framesDir string) Result {
 	name := versionedName(cfg.Deployment, tag) // chrome-<tag>
 	jobName := versionedName(cfg.JobName, tag) // chrome-smoke-<tag>
 	image := fmt.Sprintf("%s:%s", cfg.ImageRepo, tag)
@@ -190,7 +191,7 @@ func sweepOne(ctx context.Context, c *Cluster, cfg Config, base baseManifests, t
 	if bullyLogs, lerr := c.JobContainerLogs(ctx, jobName, "chrome-bully"); lerr == nil {
 		if remote, perr := capturedFramePath(bullyLogs); perr == nil {
 			res.ChromeVersion = versionFromFrame(remote)
-			local := filepath.Join(cfg.OutDir, "frames", tag+".png")
+			local := filepath.Join(framesDir, tag+".png")
 			if cerr := c.CopyFrame(ctx, collectorPodName, remote, local); cerr == nil {
 				res.FramePath = local
 			} else {

@@ -105,7 +105,16 @@ func run(kubeconfig string, cfg Config) error {
 	cluster := NewCluster(cs, cfg.Namespace)
 
 	ctx := context.Background()
-	rep, err := Run(ctx, cluster, cfg)
+
+	// Frames are copied into a scratch dir, bundled into report.zip, then removed —
+	// report.zip is the only artifact left in OutDir.
+	framesDir, err := os.MkdirTemp("", "chrome-sweep-frames-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(framesDir)
+
+	rep, err := Run(ctx, cluster, cfg, framesDir)
 	if err != nil {
 		return err
 	}
@@ -113,25 +122,18 @@ func run(kubeconfig string, cfg Config) error {
 	if err := os.MkdirAll(cfg.OutDir, 0o755); err != nil {
 		return err
 	}
-	md := renderMarkdown(rep)
-	if err := os.WriteFile(filepath.Join(cfg.OutDir, "report.md"), []byte(md), 0o644); err != nil {
-		return err
-	}
 	js, err := renderJSON(rep)
 	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(cfg.OutDir, "report.json"), js, 0o644); err != nil {
 		return err
 	}
 	if err := writeBundle(filepath.Join(cfg.OutDir, "report.zip"), js, rep.Results); err != nil {
 		return err
 	}
-	fmt.Print(md)
+	fmt.Print(renderMarkdown(rep))
 
 	for _, r := range rep.Results {
 		if r.Status != StatusPass {
-			return fmt.Errorf("one or more versions did not pass; see %s/report.md", cfg.OutDir)
+			return fmt.Errorf("one or more versions did not pass; see %s/report.zip", cfg.OutDir)
 		}
 	}
 	return nil
