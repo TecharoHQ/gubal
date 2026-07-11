@@ -76,6 +76,9 @@ func (c *Cluster) ReplaceJob(ctx context.Context, job *batchv1.Job) error {
 				if apierrors.IsNotFound(gerr) {
 					return true, nil
 				}
+				if gerr != nil {
+					return false, gerr
+				}
 				return false, nil
 			}); werr != nil {
 			return fmt.Errorf("waiting for old job to clear: %w", werr)
