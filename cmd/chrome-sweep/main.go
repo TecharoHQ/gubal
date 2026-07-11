@@ -79,15 +79,41 @@ func kubeClient(kubeconfig string) (kubernetes.Interface, error) {
 	return kubernetes.NewForConfig(restCfg)
 }
 
-// run is filled in in Task 7; for now it validates wiring.
 func run(kubeconfig string, cfg Config) error {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+
 	cs, err := kubeClient(kubeconfig)
 	if err != nil {
 		return err
 	}
-	_ = cs
-	_ = context.Background()
-	slog.Info("configured", "namespace", cfg.Namespace, "versions", cfg.Versions, "out", cfg.OutDir)
+	cluster := NewCluster(cs, cfg.Namespace)
+
+	ctx := context.Background()
+	results, err := Run(ctx, cluster, cfg)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(cfg.OutDir, 0o755); err != nil {
+		return err
+	}
+	md := renderMarkdown(results)
+	if err := os.WriteFile(filepath.Join(cfg.OutDir, "report.md"), []byte(md), 0o644); err != nil {
+		return err
+	}
+	js, err := renderJSON(results)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(cfg.OutDir, "report.json"), js, 0o644); err != nil {
+		return err
+	}
+	fmt.Print(md)
+
+	for _, r := range results {
+		if r.Status != StatusPass {
+			return fmt.Errorf("one or more versions did not pass; see %s/report.md", cfg.OutDir)
+		}
+	}
 	return nil
 }
