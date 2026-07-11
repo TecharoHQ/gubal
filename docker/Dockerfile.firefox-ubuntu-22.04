@@ -1,0 +1,72 @@
+# Firefox era image — Ubuntu 22.04 (Firefox major 99-124, ~2022-2024).
+#
+# Mirrors the Chrome era images, but the browser is Firefox and the CDP surface is
+# provided by foxbridge (github.com/VulpineOS/foxbridge), which launches Firefox and
+# translates Chrome DevTools Protocol calls into Firefox's WebDriver BiDi protocol.
+# So existing CDP tooling (chromedp, Puppeteer, ...) drives it unchanged on :9222.
+#
+# The Ubuntu base is contemporary with the Firefox build so Firefox's shared-library
+# needs resolve against packages that actually existed then.
+#
+# Build (from the repo root, so docker/firefox-entrypoint.sh is in context):
+#   docker build -f docker/Dockerfile.firefox-ubuntu-22.04 \
+#     --build-arg FIREFOX_TARBALL_URL=https://chrome-archive.t3.tigrisfiles.io/firefox/99/firefox-99.0.1.tar.bz2 \
+#     --build-arg FIREFOX_TARBALL_SHA256=<sha256> \
+#     -t ghcr.io/techarohq/gubal/firefox:99 .
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Firefox's shared-library + font dependency closure. libgtk-3-0 pulls the bulk of the
+# X/xcb/pango/cairo/gdk stack transitively; the rest are Firefox's direct extras. socat
+# is the CDP bridge (see firefox-entrypoint.sh). Package names are the pre-t64 spellings
+# used on Ubuntu <= 23.10.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      ca-certificates curl socat bzip2 xz-utils \
+      libgtk-3-0 libdbus-glib-1-2 libxt6 libasound2 libpci3 libx11-xcb1 \
+      fonts-liberation fonts-noto-cjk fonts-noto-color-emoji; \
+    rm -rf /var/lib/apt/lists/*
+
+# Static tini for a uniform init across every era (18.04 has no tini package).
+ARG TINI_VERSION=v0.19.0
+ARG TINI_SHA256=c5b0666b4cb676901f90dfcb37106783c5fe2077b04590973b885950611b30ee
+RUN set -eux; \
+    curl -fsSL "https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-static-amd64" -o /usr/local/bin/tini; \
+    echo "${TINI_SHA256}  /usr/local/bin/tini" | sha256sum -c -; \
+    chmod +x /usr/local/bin/tini
+
+# The CDP bridge itself — the statically-linked foxbridge binary from the base image.
+COPY --from=ghcr.io/techarohq/gubal/foxbridge:latest /usr/local/bin/foxbridge /usr/local/bin/foxbridge
+COPY docker/firefox-entrypoint.sh /usr/local/bin/firefox-entrypoint.sh
+RUN chmod +x /usr/local/bin/firefox-entrypoint.sh
+
+# Non-root runtime user.
+RUN groupadd -r firefox && \
+    useradd -r -g firefox -G audio,video -m -d /home/firefox firefox
+
+# Per-Firefox-version layer — the only one that re-runs per version. Firefox ships as a
+# self-contained tarball on archive.mozilla.org (mirrored to Tigris); we unpack it to
+# /opt/firefox. The ARGs live here so a new URL invalidates only this cheap layer.
+# tar autodetects .tar.xz / .tar.bz2 (older releases) from the stream.
+ARG FIREFOX_TARBALL_URL
+ARG FIREFOX_TARBALL_SHA256=""
+RUN set -eux; \
+    test -n "${FIREFOX_TARBALL_URL}"; \
+    curl -fsSL "${FIREFOX_TARBALL_URL}" -o /tmp/firefox.tar; \
+    if [ -n "${FIREFOX_TARBALL_SHA256}" ]; then \
+      echo "${FIREFOX_TARBALL_SHA256}  /tmp/firefox.tar" | sha256sum -c -; \
+    fi; \
+    tar -xaf /tmp/firefox.tar -C /opt; \
+    rm -f /tmp/firefox.tar; \
+    test -x /opt/firefox/firefox
+
+USER firefox
+WORKDIR /home/firefox
+EXPOSE 9222
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=5 \
+  CMD curl -fsS "http://127.0.0.1:${CDP_PORT:-9222}/json/version" >/dev/null || exit 1
+
+ENTRYPOINT ["/usr/local/bin/tini", "--", "/usr/local/bin/firefox-entrypoint.sh"]

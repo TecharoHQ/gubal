@@ -1,0 +1,50 @@
+name: build-firefox-images
+
+# Mass-build the Firefox era images and push them to GHCR using the same script you
+# run locally. Manually triggered — this pulls many tarballs and builds many images.
+# Depends on the Firefox archive manifest existing in the bucket (produced by the
+# Firefox archival job); until then, drive it with --only / a local --manifest.
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: "Comma-separated Firefox majors to build (blank = all)"
+        required: false
+        default: ""
+      push:
+        description: "Push images to GHCR"
+        type: boolean
+        required: false
+        default: true
+
+concurrency:
+  group: build-firefox-images
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build (and push) Firefox images
+        run: |
+          args=()
+          if [ -n "$ONLY" ]; then args+=(--only "$ONLY"); fi
+          if [ "$PUSH" = "true" ]; then args+=(--push); fi
+          bash scripts/build-firefox-images.sh "${args[@]}"
+        env:
+          ONLY: ${{ inputs.only }}
+          PUSH: ${{ inputs.push }}
+          REGISTRY: ghcr.io/techarohq/gubal/firefox

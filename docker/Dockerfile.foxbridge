@@ -1,0 +1,70 @@
+# foxbridge base image.
+#
+# foxbridge (github.com/VulpineOS/foxbridge) is a CDP-to-Firefox proxy: it launches
+# Firefox and translates Chrome DevTools Protocol calls into Firefox's WebDriver BiDi
+# (or Juggler) protocol, so existing CDP tooling (chromedp, Puppeteer, ...) can drive
+# Firefox unchanged — the same :9222 CDP surface the Chrome era images expose.
+#
+# This is the shared, browser-less base for the Firefox era images. It carries the
+# statically-linked foxbridge binary at a stable path; each Firefox era image is built
+# on its era-contemporary Ubuntu and pulls the binary out of here with
+#   COPY --from=ghcr.io/techarohq/gubal/foxbridge:latest /usr/local/bin/foxbridge ...
+# rather than FROM-ing it, so every era keeps its contemporary OS (matching the Chrome
+# design). This image is NOT useful standalone — it has no browser; its entrypoint
+# exits with a clear error. Run a firefox-* image instead.
+#
+# Build (from the repo root):
+#   docker build -f docker/Dockerfile.foxbridge \
+#     -t ghcr.io/techarohq/gubal/foxbridge:latest .
+
+# ---- build stage (fat) -------------------------------------------------------
+FROM golang:1.26-alpine AS build
+
+# Pin foxbridge to a tagged release for reproducibility. Bump deliberately.
+# NOTE: v0.1.0 used the old github.com/PopcornDev1/foxbridge module path; v0.1.1+ is
+# github.com/VulpineOS/foxbridge, so do not pin below v0.1.1.
+ARG FOXBRIDGE_VERSION=latest
+
+# Static, stripped binary so it runs unchanged on any era's Ubuntu once COPY'd across.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOBIN=/out \
+  go install -trimpath -ldflags="-s -w" \
+  github.com/VulpineOS/foxbridge/cmd/foxbridge@${FOXBRIDGE_VERSION}
+
+# ---- runtime stage (thin) ----------------------------------------------------
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# socat is the CDP bridge, curl backs the healthcheck, ca-certificates let
+# foxbridge/Firefox dial https targets. No browser here by design.
+RUN set -eux; \
+  apt-get update; \
+  apt-get install -y --no-install-recommends \
+  ca-certificates curl socat; \
+  rm -rf /var/lib/apt/lists/*
+
+# Static tini for a uniform init across every era (18.04 has no tini package), matching
+# the Chrome era images so the ENTRYPOINT path is identical everywhere.
+ARG TINI_VERSION=v0.19.0
+ARG TINI_SHA256=c5b0666b4cb676901f90dfcb37106783c5fe2077b04590973b885950611b30ee
+RUN set -eux; \
+  curl -fsSL "https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-static-amd64" -o /usr/local/bin/tini; \
+  echo "${TINI_SHA256}  /usr/local/bin/tini" | sha256sum -c -; \
+  chmod +x /usr/local/bin/tini
+
+COPY --from=build /out/foxbridge /usr/local/bin/foxbridge
+COPY docker/firefox-entrypoint.sh /usr/local/bin/firefox-entrypoint.sh
+RUN chmod +x /usr/local/bin/firefox-entrypoint.sh
+
+# Non-root runtime user, matching the Firefox era images.
+RUN groupadd -r firefox && \
+  useradd -r -g firefox -G audio,video -m -d /home/firefox firefox
+
+USER firefox
+WORKDIR /home/firefox
+EXPOSE 9222
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=5 \
+  CMD curl -fsS "http://127.0.0.1:${CDP_PORT:-9222}/json/version" >/dev/null || exit 1
+
+ENTRYPOINT ["/usr/local/bin/tini", "--", "/usr/local/bin/firefox-entrypoint.sh"]
