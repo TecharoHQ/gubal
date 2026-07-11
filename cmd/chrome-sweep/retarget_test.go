@@ -1,0 +1,129 @@
+package main
+
+import (
+	"strings"
+	"testing"
+
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+func TestVersionedName(t *testing.T) {
+	if got := versionedName("chrome", "150"); got != "chrome-150" {
+		t.Fatalf("got %q, want chrome-150", got)
+	}
+	if got := versionedName("chrome-smoke", "150"); got != "chrome-smoke-150" {
+		t.Fatalf("got %q, want chrome-smoke-150", got)
+	}
+}
+
+func TestRetargetDeployment(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "chrome", Labels: map[string]string{"app": "chrome"}},
+		Spec: appsv1.DeploymentSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "chrome"}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": "chrome"}},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{
+					{Name: "chrome", Image: "chrome"},
+					{Name: "sidecar", Image: "sidecar:1"},
+				}},
+			},
+		},
+	}
+	retargetDeployment(dep, "chrome-150", "chrome", "repo/chrome:150")
+	if dep.Name != "chrome-150" {
+		t.Fatalf("name = %q", dep.Name)
+	}
+	if dep.Spec.Selector.MatchLabels["app"] != "chrome-150" {
+		t.Fatalf("selector app = %q", dep.Spec.Selector.MatchLabels["app"])
+	}
+	if dep.Spec.Template.Labels["app"] != "chrome-150" {
+		t.Fatalf("template app = %q", dep.Spec.Template.Labels["app"])
+	}
+	if dep.Spec.Template.Spec.Containers[0].Image != "repo/chrome:150" {
+		t.Fatalf("chrome image = %q", dep.Spec.Template.Spec.Containers[0].Image)
+	}
+	if dep.Spec.Template.Spec.Containers[1].Image != "sidecar:1" {
+		t.Fatalf("sidecar image should be untouched, got %q", dep.Spec.Template.Spec.Containers[1].Image)
+	}
+}
+
+func TestRetargetService(t *testing.T) {
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{Name: "chrome"},
+		Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": "chrome"}},
+	}
+	retargetService(svc, "chrome-150")
+	if svc.Name != "chrome-150" || svc.Spec.Selector["app"] != "chrome-150" {
+		t.Fatalf("svc = %q / %q", svc.Name, svc.Spec.Selector["app"])
+	}
+}
+
+func TestRetargetNetworkPolicy(t *testing.T) {
+	np := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "chrome-lockdown"},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "chrome"}},
+		},
+	}
+	retargetNetworkPolicy(np, "chrome-150")
+	if np.Name != "chrome-150-lockdown" {
+		t.Fatalf("np name = %q", np.Name)
+	}
+	if np.Spec.PodSelector.MatchLabels["app"] != "chrome-150" {
+		t.Fatalf("np podSelector app = %q", np.Spec.PodSelector.MatchLabels["app"])
+	}
+}
+
+func TestRetargetJob(t *testing.T) {
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "chrome-smoke"},
+		Spec: batchv1.JobSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					Name: "smoke",
+					Args: []string{
+						"echo waiting for chrome:9222; curl -H 'Host: localhost:9222' http://chrome:9222/json/version",
+					},
+				},
+				{
+					Name: "chrome-bully",
+					Args: []string{"-cdp-url=http://chrome:9222", "-target-url=https://example"},
+				},
+			},
+		}}},
+	}
+	retargetJob(job, "chrome-smoke-150", "chrome", "chrome-150")
+	if job.Name != "chrome-smoke-150" {
+		t.Fatalf("job name = %q", job.Name)
+	}
+	smoke := job.Spec.Template.Spec.Containers[0].Args[0]
+	if want := "http://chrome-150:9222/json/version"; !strings.Contains(smoke, want) {
+		t.Fatalf("smoke arg not retargeted: %q", smoke)
+	}
+	if !strings.Contains(smoke, "Host: localhost:9222") {
+		t.Fatalf("localhost host header must be preserved: %q", smoke)
+	}
+	if got := job.Spec.Template.Spec.Containers[1].Args[0]; got != "-cdp-url=http://chrome-150:9222" {
+		t.Fatalf("chrome-bully cdp arg = %q", got)
+	}
+}
+
+func TestLoadManifests(t *testing.T) {
+	dep, err := loadDeployment("../../k8s/deployment.yaml", "ci")
+	if err != nil || dep.Name != "chrome" || dep.Namespace != "ci" {
+		t.Fatalf("loadDeployment: %v name=%q ns=%q", err, dep.GetName(), dep.GetNamespace())
+	}
+	svc, err := loadService("../../k8s/service.yaml", "ci")
+	if err != nil || svc.Name != "chrome" {
+		t.Fatalf("loadService: %v name=%q", err, svc.GetName())
+	}
+	np, err := loadNetworkPolicy("../../k8s/networkpolicy.yaml", "ci")
+	if err != nil || np.Name != "chrome-lockdown" {
+		t.Fatalf("loadNetworkPolicy: %v name=%q", err, np.GetName())
+	}
+}
