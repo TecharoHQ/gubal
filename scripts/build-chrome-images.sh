@@ -103,6 +103,23 @@ fi
 total="$(jq 'length' "${MANIFEST}")"
 log "Manifest holds ${total} versions; registry=${REGISTRY}"
 
+# --- Discover one representative deb per era for the dependency-cache layer ------
+#
+# Every Chrome version in an era shares the same shared-library dependency closure,
+# so the Dockerfiles warm it once from an era-representative deb passed via
+# CHROME_DEPS_DEB_URL. We pick the LOWEST major present in each era: it's a real,
+# existing deb, its URL is stable as the manifest grows (so the layer stays cached),
+# and because targets are >= it, the final per-version install never downgrades.
+declare -A DEPS_KEY_FOR_UBUNTU DEPS_MAJOR_FOR_UBUNTU
+while IFS=$'\t' read -r d_major d_key; do
+  d_ubuntu="$(ubuntu_for_major "${d_major}")"
+  cur="${DEPS_MAJOR_FOR_UBUNTU[${d_ubuntu}]:-}"
+  if [ -z "${cur}" ] || [ "${d_major}" -lt "${cur}" ]; then
+    DEPS_MAJOR_FOR_UBUNTU[${d_ubuntu}]="${d_major}"
+    DEPS_KEY_FOR_UBUNTU[${d_ubuntu}]="${d_key}"
+  fi
+done < <(jq -r '.[] | [.major, .tigris_key] | @tsv' "${MANIFEST}")
+
 # --- Build loop -----------------------------------------------------------------
 
 built=(); failed=(); skipped=()
@@ -118,17 +135,20 @@ while IFS=$'\t' read -r major filename sha256 key; do
   [ -f "${dockerfile}" ] || { log "!! missing ${dockerfile}, skipping ${full_version}"; failed+=("${full_version}"); continue; }
 
   deb_url="${BUCKET_URL}/${key}"
+  deps_deb_url="${BUCKET_URL}/${DEPS_KEY_FOR_UBUNTU[${ubuntu}]}"
   tag_full="${REGISTRY}:${full_version}"
   tag_major="${REGISTRY}:${major}"
 
   log "== Chrome ${full_version} -> ubuntu:${ubuntu} =="
   log "   deb: ${deb_url}"
+  log "   deps: major ${DEPS_MAJOR_FOR_UBUNTU[${ubuntu}]} (${deps_deb_url})"
   log "   tags: ${tag_full} ${tag_major}"
 
   build_cmd=("${DOCKER}" build
     -f "${dockerfile}"
     --build-arg "CHROME_DEB_URL=${deb_url}"
     --build-arg "CHROME_DEB_SHA256=${sha256}"
+    --build-arg "CHROME_DEPS_DEB_URL=${deps_deb_url}"
     -t "${tag_full}" -t "${tag_major}"
     "${REPO_ROOT}")
 

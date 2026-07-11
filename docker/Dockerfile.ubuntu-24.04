@@ -34,22 +34,28 @@ RUN set -eux; \
     rm -rf /var/lib/apt/lists/*
 
 # Warm Chrome's full shared-library dependency closure (libnss3, libgtk, libgbm, the
-# x11/xcb libs, ...). This is the slow, bandwidth-heavy step, and it is IDENTICAL for
-# every Chrome version in this era — so we resolve it once from a fixed, era-
-# representative Chrome deb rather than per version. CHROME_DEPS_DEB_URL has a
-# constant default, so changing CHROME_DEB_URL below does NOT invalidate this layer:
-# a new Chrome version then downloads only its own deb, never the dep tree again.
-# apt self-heals in the final layer if a later Chrome adds a dependency.
+# x11/xcb libs, ...) once per era. This is the slow, bandwidth-heavy step and it is
+# IDENTICAL for every Chrome version in the era, so build-chrome-images.sh discovers a
+# single era-representative deb from the archive manifest and passes it here for every
+# build in the era — keeping this layer cached so a new Chrome version downloads only
+# its own deb below. apt self-heals in the final layer if a later Chrome adds a dep.
 #
-# Deriving the deps from a real deb (instead of a hand-written package list) keeps us
-# honest across Ubuntu's t64 library renames (libasound2 -> libasound2t64, etc.).
-ARG CHROME_DEPS_DEB_URL=https://chrome-archive.t3.tigrisfiles.io/chrome/120/google-chrome-stable_120.0.6099.109-1_amd64.deb
+# Deriving deps from a real deb (not a hand-written package list) stays correct across
+# Ubuntu's t64 library renames (libasound2 -> libasound2t64, etc.). Empty by default,
+# so a bare `docker build` still works — it just skips the pre-warm.
+#
+# The deb's postinst drops Google's apt source into the image; we delete it here so
+# the per-version layer's apt-get update doesn't fail on that unsigned repo.
+ARG CHROME_DEPS_DEB_URL=""
 RUN set -eux; \
-    curl -fsSL "${CHROME_DEPS_DEB_URL}" -o /tmp/chrome-deps.deb; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends /tmp/chrome-deps.deb; \
-    rm -f /tmp/chrome-deps.deb; \
-    rm -rf /var/lib/apt/lists/*
+    if [ -n "${CHROME_DEPS_DEB_URL}" ]; then \
+      curl -fsSL "${CHROME_DEPS_DEB_URL}" -o /tmp/chrome-deps.deb; \
+      apt-get update; \
+      apt-get install -y --no-install-recommends /tmp/chrome-deps.deb; \
+      rm -f /tmp/chrome-deps.deb; \
+      rm -f /etc/apt/sources.list.d/google-chrome.list; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # tini isn't packaged for older Ubuntu (e.g. 18.04), so fetch the static release
 # binary for a uniform init across every era. amd64 only — the Chrome debs are too.
