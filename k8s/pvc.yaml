@@ -1,0 +1,13 @@
+# Durable home for the frames chrome-bully writes. ReadWriteOnce is fine: only
+# the single chrome pod mounts it (replicas: 1).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chrome-bully-data
+  labels: { app: chrome }
+spec:
+  accessModes: ["ReadWriteMany"]
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: itsuki

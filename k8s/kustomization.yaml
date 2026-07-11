@@ -1,0 +1,11 @@
+resources:
+  - deployment.yaml
+  - networkpolicy.yaml
+  - pvc.yaml
+  - service.yaml
+  - smoke-job.yaml
+
+images:
+  - name: chrome
+    newName: ghcr.io/techarohq/gubal/chrome
+    newTag: "150"
