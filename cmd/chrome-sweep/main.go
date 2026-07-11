@@ -48,7 +48,13 @@ func main() {
 	flag.DurationVar(&cfg.JobTimeout, "job-timeout", 4*time.Minute, "max wait for the smoke Job to finish")
 	flag.Parse()
 
-	cfg.Versions = flag.Args()
+	versions, err := parseVersions(flag.Args())
+	if err != nil {
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+		slog.Error("bad versions", "err", err)
+		os.Exit(1)
+	}
+	cfg.Versions = versions
 
 	if err := run(*kubeconfig, cfg); err != nil {
 		slog.Error("fatal", "err", err)
@@ -76,9 +82,6 @@ func kubeClient(kubeconfig string) (kubernetes.Interface, error) {
 // run is filled in in Task 7; for now it validates wiring.
 func run(kubeconfig string, cfg Config) error {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
-	if len(cfg.Versions) == 0 {
-		return fmt.Errorf("no versions given; usage: chrome-sweep [flags] TAG [TAG...]")
-	}
 	cs, err := kubeClient(kubeconfig)
 	if err != nil {
 		return err
