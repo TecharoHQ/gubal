@@ -126,10 +126,11 @@ func run(kubeconfig string, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	if err := writeBundle(filepath.Join(cfg.OutDir, "report.zip"), js, rep.Results); err != nil {
+	md := renderMarkdown(rep)
+	if err := writeBundle(filepath.Join(cfg.OutDir, "report.zip"), js, []byte(md), rep.Results); err != nil {
 		return err
 	}
-	fmt.Print(renderMarkdown(rep))
+	fmt.Print(md)
 
 	for _, r := range rep.Results {
 		if r.Status != StatusPass {

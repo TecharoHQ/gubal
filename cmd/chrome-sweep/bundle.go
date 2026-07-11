@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 )
 
-// writeBundle writes a zip archive to path containing report.json plus every
-// result's captured frame under frames/. Results without a captured frame are
-// skipped. The Markdown report is intentionally NOT included.
-func writeBundle(path string, reportJSON []byte, results []Result) (err error) {
+// writeBundle writes a zip archive to path containing report.json, report.md, and
+// every result's captured frame under frames/. Results without a captured frame
+// are skipped.
+func writeBundle(path string, reportJSON, reportMarkdown []byte, results []Result) (err error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -23,6 +23,9 @@ func writeBundle(path string, reportJSON []byte, results []Result) (err error) {
 
 	zw := zip.NewWriter(f)
 	if err := addZipFile(zw, "report.json", reportJSON); err != nil {
+		return err
+	}
+	if err := addZipFile(zw, "report.md", reportMarkdown); err != nil {
 		return err
 	}
 	for _, r := range results {

@@ -24,8 +24,9 @@ func TestWriteBundle(t *testing.T) {
 		{Tag: "999", Status: StatusFail}, // no frame — must be skipped
 	}
 	reportJSON := []byte(`{"results":[]}`)
+	reportMarkdown := []byte("# Chrome version sweep — 2/3 passed\n")
 	zipPath := filepath.Join(dir, "report.zip")
-	if err := writeBundle(zipPath, reportJSON, results); err != nil {
+	if err := writeBundle(zipPath, reportJSON, reportMarkdown, results); err != nil {
 		t.Fatal(err)
 	}
 
@@ -51,16 +52,16 @@ func TestWriteBundle(t *testing.T) {
 	if !bytes.Equal(got["report.json"], reportJSON) {
 		t.Fatalf("report.json = %q, want %q", got["report.json"], reportJSON)
 	}
+	if !bytes.Equal(got["report.md"], reportMarkdown) {
+		t.Fatalf("report.md = %q, want %q", got["report.md"], reportMarkdown)
+	}
 	if !bytes.Equal(got["frames/150.png"], []byte("PNG-150")) {
 		t.Fatalf("frames/150.png = %q", got["frames/150.png"])
 	}
 	if !bytes.Equal(got["frames/120.png"], []byte("PNG-120")) {
 		t.Fatalf("frames/120.png = %q", got["frames/120.png"])
 	}
-	if _, ok := got["report.md"]; ok {
-		t.Fatal("bundle must not contain report.md")
-	}
-	if len(got) != 3 {
-		t.Fatalf("expected 3 entries (report.json + 2 frames), got %d", len(got))
+	if len(got) != 4 {
+		t.Fatalf("expected 4 entries (report.json + report.md + 2 frames), got %d", len(got))
 	}
 }
