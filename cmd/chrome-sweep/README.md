@@ -19,10 +19,10 @@ created by the tool — they must NOT pre-exist under the same names.
     go build -o ./var/chrome-sweep ./cmd/chrome-sweep
     ./var/chrome-sweep -out ./var/sweep 110 120 130 150
 
-The only artifact written to `-out` is `report.zip`, bundling `report.json`,
-`report.md`, and every captured frame under `frames/<tag>.png`. The Markdown
-summary is also printed to stdout. `report.json` records the Anubis image the run
-was tested against. Exit code is non-zero if any version did not pass.
+Under `-out` the tool writes `report.zip` — bundling `report.json`, `report.md`,
+and every captured frame under `frames/<tag>.png` — plus a loose `report.md`. The
+Markdown summary is also printed to stdout. `report.json` records the Anubis image
+the run was tested against. Exit code is non-zero if any version did not pass.
 
 ## Anubis version
 

@@ -130,6 +130,9 @@ func run(kubeconfig string, cfg Config) error {
 	if err := writeBundle(filepath.Join(cfg.OutDir, "report.zip"), js, []byte(md), rep.Results); err != nil {
 		return err
 	}
+	if err := os.WriteFile(filepath.Join(cfg.OutDir, "report.md"), []byte(md), 0o644); err != nil {
+		return err
+	}
 	fmt.Print(md)
 
 	for _, r := range rep.Results {
