@@ -46,15 +46,23 @@ func loadBaseManifests(cfg Config) (baseManifests, error) {
 }
 
 // Run tests each version in cfg.Versions in bounded parallel (cfg.Parallelism at
-// once) and returns one Result each, in argument order. A failure on one version
-// is recorded and does not stop the others.
-func Run(ctx context.Context, c *Cluster, cfg Config) ([]Result, error) {
+// once) and returns a Report: one Result per version (in argument order) plus the
+// Anubis image they were tested against. A failure on one version is recorded and
+// does not stop the others.
+func Run(ctx context.Context, c *Cluster, cfg Config) (Report, error) {
 	base, err := loadBaseManifests(cfg)
 	if err != nil {
-		return nil, err
+		return Report{}, err
 	}
+
+	anubisImage, restoreAnubis, err := prepareAnubis(ctx, c, cfg)
+	if err != nil {
+		return Report{}, err
+	}
+	defer restoreAnubis()
+
 	if err := c.EnsureCollector(ctx, collectorPodName, cfg.CollectorPVC, cfg.ReadyTimeout); err != nil {
-		return nil, err
+		return Report{}, err
 	}
 	defer func() {
 		if derr := c.DeleteCollector(context.Background(), collectorPodName); derr != nil {
@@ -79,7 +87,48 @@ func Run(ctx context.Context, c *Cluster, cfg Config) ([]Result, error) {
 		}(i, tag)
 	}
 	wg.Wait()
-	return results, nil
+	return Report{AnubisImage: anubisImage, Results: results}, nil
+}
+
+// prepareAnubis resolves the Anubis image the sweep runs against. The default ref
+// is read from the Anubis manifest (never hardcoded); if cfg.AnubisImage is set it
+// overrides that and the live Anubis Deployment is re-imaged for the run, with the
+// returned restore func putting the original image back afterward.
+func prepareAnubis(ctx context.Context, c *Cluster, cfg Config) (image string, restore func(), err error) {
+	noop := func() {}
+	dep, err := loadDeployment(cfg.AnubisManifest, cfg.Namespace)
+	if err != nil {
+		return "", noop, fmt.Errorf("loading anubis manifest: %w", err)
+	}
+	manifestImage := ""
+	for _, ct := range dep.Spec.Template.Spec.Containers {
+		if ct.Name == cfg.AnubisContainer {
+			manifestImage = ct.Image
+		}
+	}
+	if cfg.AnubisImage == "" {
+		// No override: report the manifest's declared image; leave the cluster alone.
+		return manifestImage, noop, nil
+	}
+	// Override: re-image the live Anubis Deployment and restore it afterward.
+	original, err := c.ContainerImage(ctx, dep.Name, cfg.AnubisContainer)
+	if err != nil {
+		return "", noop, fmt.Errorf("reading current anubis image: %w", err)
+	}
+	if err := c.SetImage(ctx, dep.Name, cfg.AnubisContainer, cfg.AnubisImage); err != nil {
+		return "", noop, fmt.Errorf("setting anubis image: %w", err)
+	}
+	restore = func() {
+		if rerr := c.SetImage(context.Background(), dep.Name, cfg.AnubisContainer, original); rerr != nil {
+			slog.Warn("restoring anubis image failed", "err", rerr, "image", original)
+		}
+	}
+	slog.Info("re-imaged anubis for the sweep", "deployment", dep.Name, "image", cfg.AnubisImage)
+	if err := c.WaitDeploymentReady(ctx, dep.Name, cfg.ReadyTimeout); err != nil {
+		restore()
+		return "", noop, fmt.Errorf("anubis rollout: %w", err)
+	}
+	return cfg.AnubisImage, restore, nil
 }
 
 func sweepOne(ctx context.Context, c *Cluster, cfg Config, base baseManifests, tag string) Result {

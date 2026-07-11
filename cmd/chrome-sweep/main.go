@@ -29,6 +29,9 @@ type Config struct {
 	DeploymentManifest    string
 	ServiceManifest       string
 	NetworkPolicyManifest string
+	AnubisManifest        string
+	AnubisContainer       string
+	AnubisImage           string
 	Parallelism           int
 	CollectorPVC          string
 	OutDir                string
@@ -51,6 +54,9 @@ func main() {
 	flag.StringVar(&cfg.DeploymentManifest, "deployment-manifest", "k8s/deployment.yaml", "base Deployment manifest to template per version")
 	flag.StringVar(&cfg.ServiceManifest, "service-manifest", "k8s/service.yaml", "base Service manifest to template per version")
 	flag.StringVar(&cfg.NetworkPolicyManifest, "networkpolicy-manifest", "k8s/networkpolicy.yaml", "base NetworkPolicy manifest to template per version")
+	flag.StringVar(&cfg.AnubisManifest, "anubis-manifest", "k8s/anubis/anubis.yaml", "Anubis Deployment manifest; the tested Anubis image ref is read from it")
+	flag.StringVar(&cfg.AnubisContainer, "anubis-container", "anubis", "container in the Anubis Deployment that holds the Anubis image")
+	flag.StringVar(&cfg.AnubisImage, "anubis-image", "", "override the Anubis image ref (default: the ref from -anubis-manifest); when set, the live Anubis Deployment is re-imaged for the run and restored after")
 	flag.IntVar(&cfg.Parallelism, "parallelism", 8, "max number of versions tested concurrently")
 	flag.StringVar(&cfg.CollectorPVC, "pvc", "chrome-bully-data", "PVC that holds captured frames")
 	flag.StringVar(&cfg.OutDir, "out", "./var/sweep", "directory to write the report and copied frames into")
@@ -99,7 +105,7 @@ func run(kubeconfig string, cfg Config) error {
 	cluster := NewCluster(cs, cfg.Namespace)
 
 	ctx := context.Background()
-	results, err := Run(ctx, cluster, cfg)
+	rep, err := Run(ctx, cluster, cfg)
 	if err != nil {
 		return err
 	}
@@ -107,11 +113,11 @@ func run(kubeconfig string, cfg Config) error {
 	if err := os.MkdirAll(cfg.OutDir, 0o755); err != nil {
 		return err
 	}
-	md := renderMarkdown(results)
+	md := renderMarkdown(rep)
 	if err := os.WriteFile(filepath.Join(cfg.OutDir, "report.md"), []byte(md), 0o644); err != nil {
 		return err
 	}
-	js, err := renderJSON(results)
+	js, err := renderJSON(rep)
 	if err != nil {
 		return err
 	}
@@ -120,7 +126,7 @@ func run(kubeconfig string, cfg Config) error {
 	}
 	fmt.Print(md)
 
-	for _, r := range results {
+	for _, r := range rep.Results {
 		if r.Status != StatusPass {
 			return fmt.Errorf("one or more versions did not pass; see %s/report.md", cfg.OutDir)
 		}

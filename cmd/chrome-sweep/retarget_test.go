@@ -127,3 +127,25 @@ func TestLoadManifests(t *testing.T) {
 		t.Fatalf("loadNetworkPolicy: %v name=%q", err, np.GetName())
 	}
 }
+
+// The Anubis manifest is a multi-document YAML (Deployment then Service). Confirm
+// loadDeployment reads the Deployment (first doc) and that the anubis container's
+// image ref is recoverable from it — that ref is what prepareAnubis reports.
+func TestLoadAnubisManifestImage(t *testing.T) {
+	dep, err := loadDeployment("../../k8s/anubis/anubis.yaml", "ci")
+	if err != nil {
+		t.Fatalf("loadDeployment(anubis): %v", err)
+	}
+	if dep.Name != "anubis" {
+		t.Fatalf("anubis deployment name = %q, want anubis", dep.Name)
+	}
+	image := ""
+	for _, ct := range dep.Spec.Template.Spec.Containers {
+		if ct.Name == "anubis" {
+			image = ct.Image
+		}
+	}
+	if image == "" {
+		t.Fatalf("anubis container image not found in manifest; containers=%d", len(dep.Spec.Template.Spec.Containers))
+	}
+}

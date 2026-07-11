@@ -16,6 +16,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/yaml"
@@ -29,6 +30,34 @@ type Cluster struct {
 
 func NewCluster(cs kubernetes.Interface, namespace string) *Cluster {
 	return &Cluster{cs: cs, ns: namespace}
+}
+
+// SetImage strategic-merge-patches one container's image on a Deployment. Used
+// for the shared, singleton Anubis Deployment (per-version chrome resources are
+// created outright, not patched).
+func (c *Cluster) SetImage(ctx context.Context, deployment, container, image string) error {
+	patch := []byte(fmt.Sprintf(
+		`{"spec":{"template":{"spec":{"containers":[{"name":%q,"image":%q}]}}}}`, container, image))
+	_, err := c.cs.AppsV1().Deployments(c.ns).Patch(
+		ctx, deployment, types.StrategicMergePatchType, patch, metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("patching %s image: %w", deployment, err)
+	}
+	return nil
+}
+
+// ContainerImage returns the current image of the named container in a Deployment.
+func (c *Cluster) ContainerImage(ctx context.Context, deployment, container string) (string, error) {
+	d, err := c.cs.AppsV1().Deployments(c.ns).Get(ctx, deployment, metav1.GetOptions{})
+	if err != nil {
+		return "", err
+	}
+	for _, ct := range d.Spec.Template.Spec.Containers {
+		if ct.Name == container {
+			return ct.Image, nil
+		}
+	}
+	return "", fmt.Errorf("container %q not found in deployment %s", container, deployment)
 }
 
 // WaitDeploymentReady blocks until the Deployment's newest generation is fully

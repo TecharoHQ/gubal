@@ -25,19 +25,29 @@ type Result struct {
 	Detail        string `json:"detail,omitempty"`
 }
 
+// Report is the full outcome of a sweep run: the per-version results plus the
+// Anubis image they were tested against (run-wide, since Anubis is a singleton).
+type Report struct {
+	AnubisImage string   `json:"anubis_image,omitempty"`
+	Results     []Result `json:"results"`
+}
+
 // renderMarkdown produces a human-readable summary table.
-func renderMarkdown(results []Result) string {
+func renderMarkdown(rep Report) string {
 	var b strings.Builder
 	passed := 0
-	for _, r := range results {
+	for _, r := range rep.Results {
 		if r.Status == StatusPass {
 			passed++
 		}
 	}
-	fmt.Fprintf(&b, "# Chrome version sweep — %d/%d passed\n\n", passed, len(results))
+	fmt.Fprintf(&b, "# Chrome version sweep — %d/%d passed\n\n", passed, len(rep.Results))
+	if rep.AnubisImage != "" {
+		fmt.Fprintf(&b, "Anubis image: `%s`\n\n", rep.AnubisImage)
+	}
 	b.WriteString("| tag | status | chrome version | frame | detail |\n")
 	b.WriteString("|-----|--------|----------------|-------|--------|\n")
-	for _, r := range results {
+	for _, r := range rep.Results {
 		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n",
 			r.Tag, r.Status, dash(r.ChromeVersion), dash(r.FramePath), dash(r.Detail))
 	}
@@ -51,7 +61,7 @@ func dash(s string) string {
 	return s
 }
 
-// renderJSON serializes the results as indented JSON.
-func renderJSON(results []Result) ([]byte, error) {
-	return json.MarshalIndent(results, "", "  ")
+// renderJSON serializes the report as indented JSON.
+func renderJSON(rep Report) ([]byte, error) {
+	return json.MarshalIndent(rep, "", "  ")
 }

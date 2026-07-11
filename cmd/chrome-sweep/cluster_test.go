@@ -16,6 +16,46 @@ import (
 
 type runtimeObject = runtime.Object
 
+func TestSetImage(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "backend", Namespace: "ci"},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "old:1"}}},
+			},
+		},
+	}
+	cs := fake.NewSimpleClientset(dep)
+	c := NewCluster(cs, "ci")
+	if err := c.SetImage(context.Background(), "backend", "app", "repo/app:v2"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := cs.AppsV1().Deployments("ci").Get(context.Background(), "backend", metav1.GetOptions{})
+	if img := got.Spec.Template.Spec.Containers[0].Image; img != "repo/app:v2" {
+		t.Fatalf("image = %q, want repo/app:v2", img)
+	}
+}
+
+func TestContainerImage(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "backend", Namespace: "ci"},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "repo/app:orig"}}},
+			},
+		},
+	}
+	cs := fake.NewSimpleClientset(dep)
+	c := NewCluster(cs, "ci")
+	got, err := c.ContainerImage(context.Background(), "backend", "app")
+	if err != nil || got != "repo/app:orig" {
+		t.Fatalf("ContainerImage = %q, %v", got, err)
+	}
+	if _, err := c.ContainerImage(context.Background(), "backend", "nope"); err == nil {
+		t.Fatal("expected error for missing container")
+	}
+}
+
 func TestReplaceJobCreatesWhenAbsent(t *testing.T) {
 	cs := fake.NewSimpleClientset()
 	c := NewCluster(cs, "ci")
