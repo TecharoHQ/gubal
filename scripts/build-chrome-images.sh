@@ -131,7 +131,7 @@ while IFS=$'\t' read -r major filename sha256 key; do
   [ -n "${full_version}" ] || { log "!! could not parse version from ${filename}, skipping"; failed+=("${major}?"); continue; }
 
   ubuntu="$(ubuntu_for_major "${major}")"
-  dockerfile="${REPO_ROOT}/docker/Dockerfile.ubuntu-${ubuntu}"
+  dockerfile="${REPO_ROOT}/docker/Dockerfile.chrome-ubuntu-${ubuntu}"
   [ -f "${dockerfile}" ] || { log "!! missing ${dockerfile}, skipping ${full_version}"; failed+=("${full_version}"); continue; }
 
   deb_url="${BUCKET_URL}/${key}"

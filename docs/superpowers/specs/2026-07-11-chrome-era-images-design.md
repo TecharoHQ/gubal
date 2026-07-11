@@ -44,7 +44,7 @@ Boundaries on round majors, aligned to each version's release era:
   the trust boundary, and because ancient Chrome's own sandbox has unpatched escape
   CVEs, `--no-sandbox` inside Kata is the defensible default.
 
-## Dockerfiles (`docker/Dockerfile.ubuntu-XX.04`, 5 files)
+## Dockerfiles (`docker/Dockerfile.chrome-ubuntu-XX.04`, 5 files)
 
 Near-identical; differ only in `FROM`. Each:
 
