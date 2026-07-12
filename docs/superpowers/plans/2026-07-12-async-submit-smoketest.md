@@ -959,6 +959,13 @@ bucket `techaro-gubal` as a **public-read** object and links its permanent URL
 `*s3.Client`, so uploads are `PutObject` with `ACL: public-read`. Bundle contents come
 from the existing `chromesweep.WriteBundle` (report.json/md + `frames/` + `logs/`).
 
+**Credentials:** gubald does NOT take Tigris key flags. `storage.New(ctx)` (no keypair
+option) uses the **standard AWS credential chain** — env `AWS_ACCESS_KEY_ID` /
+`AWS_SECRET_ACCESS_KEY`, `~/.aws/{config,credentials}`, and container/instance roles.
+The only knob is `-gubal-bucket` (default `techaro-gubal`); setting it empty disables
+uploads (noop). If the chain has no usable credentials, `PutObject` fails at call time
+and is logged best-effort — the result comment still posts, just without a bundle link.
+
 ### Task 8: Tigris uploader + bundle-key helper
 
 **Files:**
@@ -969,7 +976,7 @@ from the existing `chromesweep.WriteBundle` (report.json/md + `frames/` + `logs/
 **Interfaces:**
 - Produces:
   - `type bundleUploader interface { Upload(ctx context.Context, key string, data []byte, contentType string) (string, error) }`
-  - `func NewTigrisUploader(ctx context.Context, accessKeyID, secretAccessKey, bucket string) (bundleUploader, error)` — returns a `noopUploader` when creds are empty (gubald still runs without object storage).
+  - `func NewTigrisUploader(ctx context.Context, bucket string) (bundleUploader, error)` — uses the standard AWS credential chain; returns a `noopUploader` when `bucket == ""` (uploads disabled).
   - `type noopUploader struct{}` with `Upload` returning `("", nil)`.
   - `func bundleKey(pr int, id string) string` → `pr-<pr>/<id>.zip`.
 
@@ -1002,14 +1009,14 @@ func TestNoopUploader(t *testing.T) {
 	}
 }
 
-func TestNewTigrisUploaderNoCreds(t *testing.T) {
+func TestNewTigrisUploaderNoBucket(t *testing.T) {
 	t.Parallel()
-	u, err := NewTigrisUploader(context.Background(), "", "", "techaro-gubal")
+	u, err := NewTigrisUploader(context.Background(), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, ok := u.(noopUploader); !ok {
-		t.Fatalf("want noopUploader with empty creds, got %T", u)
+		t.Fatalf("want noopUploader with empty bucket, got %T", u)
 	}
 }
 ```
@@ -1042,13 +1049,14 @@ type tigrisUploader struct {
 	bucket string
 }
 
-// NewTigrisUploader builds a Tigris-backed uploader. With empty credentials it
-// returns a noopUploader so gubald still runs without object-storage access.
-func NewTigrisUploader(ctx context.Context, accessKeyID, secretAccessKey, bucket string) (bundleUploader, error) {
-	if accessKeyID == "" || secretAccessKey == "" {
+// NewTigrisUploader builds a Tigris-backed uploader using the standard AWS
+// credential chain (env AWS_*, ~/.aws config/credentials, container/instance
+// roles). An empty bucket returns a noopUploader, disabling bundle uploads.
+func NewTigrisUploader(ctx context.Context, bucket string) (bundleUploader, error) {
+	if bucket == "" {
 		return noopUploader{}, nil
 	}
-	client, err := storage.New(ctx, storage.WithAccessKeypair(accessKeyID, secretAccessKey))
+	client, err := storage.New(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("building tigris client: %w", err)
 	}
@@ -1287,24 +1295,24 @@ In `SubmitSmokeTest`'s goroutine, replace the `s.runSweep(bg, test)` result hand
 
 - [ ] **Step 4: wire `main.go`**
 
-Flags:
+Flag (only the bucket; credentials come from the standard AWS chain):
 ```go
-	tigrisAccessKeyID     = flag.String("tigris-access-key-id", "", "Tigris access key ID for uploading report bundles (env TIGRIS_ACCESS_KEY_ID)")
-	tigrisSecretAccessKey = flag.String("tigris-secret-access-key", "", "Tigris secret access key (env TIGRIS_SECRET_ACCESS_KEY)")
-	gubalBucket           = flag.String("gubal-bucket", "techaro-gubal", "Tigris bucket for report bundles (env GUBAL_BUCKET)")
+	gubalBucket = flag.String("gubal-bucket", "techaro-gubal", "Tigris bucket for report bundles; empty disables uploads (env GUBAL_BUCKET)")
 ```
 After building the commenter, build the uploader and pass it to `New`:
 ```go
-	uploader, err := smoketest.NewTigrisUploader(ctx, *tigrisAccessKeyID, *tigrisSecretAccessKey, *gubalBucket)
+	uploader, err := smoketest.NewTigrisUploader(ctx, *gubalBucket)
 	if err != nil {
 		return fmt.Errorf("building tigris uploader: %w", err)
 	}
-	if *tigrisAccessKeyID == "" {
-		lg.Warn("no -tigris-access-key-id configured; report bundles will not be uploaded")
+	if *gubalBucket == "" {
+		lg.Warn("no -gubal-bucket configured; report bundles will not be uploaded")
 	}
 	smokeTest := smoketest.New(commenter, uploader, allowed, *jobDeadline)
 ```
-(`ctx` is in scope in `run`; `lg` is the slog logger already built there.)
+(`ctx` is in scope in `run`; `lg` is the slog logger already built there. Tigris/AWS
+credentials are read from the standard AWS credential chain by `storage.New`, so no
+credential flags are added here.)
 
 - [ ] **Step 5: verify** — `go test ./cmd/gubald/svc/smoketest/`, `go test -race ./cmd/gubald/svc/smoketest/`, `go vet ./cmd/gubald/...`, `go build -o ./var/gubald ./cmd/gubald`. All green.
 
