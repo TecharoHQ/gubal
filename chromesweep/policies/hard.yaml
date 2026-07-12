@@ -1,0 +1,14 @@
+# Same shape as default, but pins a harder proof-of-work so this ruleset is a
+# distinct test pass. Modern browsers still solve it well within the smoke Job's
+# 90s capture timeout.
+bots:
+  - name: generic-browser
+    user_agent_regex: >-
+      Mozilla|Opera
+    action: CHALLENGE
+    challenge:
+      algorithm: fast
+      difficulty: 5
+  - name: everything-else
+    user_agent_regex: .
+    action: CHALLENGE
