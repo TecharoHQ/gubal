@@ -37,13 +37,13 @@ func (s *Server) SmokeTest(ctx context.Context, req *gubalv1.SmokeTestRequest) (
 	}
 
 	// Serialize sweeps: only one may touch the shared cluster resources at a
-	// time. Block until the running sweep (if any) finishes or the caller
-	// gives up.
+	// time. Reject immediately if a sweep is already running rather than
+	// queueing behind it.
 	select {
 	case sweepSem <- struct{}{}:
 		defer func() { <-sweepSem }()
-	case <-ctx.Done():
-		return nil, twirp.NewError(twirp.Canceled, ctx.Err().Error())
+	default:
+		return nil, twirp.NewError(twirp.ResourceExhausted, "a smoke test is already running; try again later")
 	}
 
 	raw := make([]string, len(req.GetChromeVersions()))
