@@ -28,7 +28,6 @@ var (
 	metricsBind          = flag.String("metrics-bind", ":9081", "Prometheus bind address")
 	region               = flag.String("region", "yow", "SigV4a region all clients must sign for")
 	service              = flag.String("service", "gubal", "SigV4a service name")
-	slogLevel            = flag.String("slog-level", "info", "log level: debug, info, warn, error")
 	xIAMDURL             = flag.String("x-iamd-url", "", "iamd url")
 	xIAMDRegion          = flag.String("x-iamd-region", "yow", "iamd region")
 	xIAMDAccessKeyID     = flag.String("x-iamd-access-key-id", "", "iamd access key ID")
@@ -49,8 +48,9 @@ func main() {
 
 func run(ctx context.Context) error {
 	var lvl slog.Level
-	if err := lvl.UnmarshalText([]byte(*slogLevel)); err != nil {
-		return fmt.Errorf("invalid -slog-level %q: %w", *slogLevel, err)
+	lvlString := flag.Lookup("slog-level").Value.String()
+	if err := lvl.UnmarshalText([]byte(lvlString)); err != nil {
+		return fmt.Errorf("invalid -slog-level %q: %w", lvlString, err)
 	}
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})))
 
@@ -78,6 +78,13 @@ func run(ctx context.Context) error {
 	lg := slog.With("program", "gubald")
 
 	mux := http.NewServeMux()
+
+	// Unauthenticated liveness/readiness probe on the main port (not wrapped by the
+	// sigv4a verifier, so probes never block on iamd).
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "OK")
+	})
 
 	smokeTest := smoketest.New()
 	var smokeTestH http.Handler = gubalv1.NewSmokeTestServiceServer(smokeTest, twirp.WithServerInterceptors(twirpslog.Interceptor(lg)))
