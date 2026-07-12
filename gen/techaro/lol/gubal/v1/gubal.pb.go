@@ -79,12 +79,13 @@ func (SweepStatus) EnumDescriptor() ([]byte, []int) {
 }
 
 type SmokeTestRequest struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	AnubisImage    string                 `protobuf:"bytes,2,opt,name=anubis_image,json=anubisImage,proto3" json:"anubis_image,omitempty"`
-	ChromeVersions []int32                `protobuf:"varint,3,rep,packed,name=chrome_versions,json=chromeVersions,proto3" json:"chrome_versions,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	AnubisImage     string                 `protobuf:"bytes,2,opt,name=anubis_image,json=anubisImage,proto3" json:"anubis_image,omitempty"`
+	ChromeVersions  []int32                `protobuf:"varint,3,rep,packed,name=chrome_versions,json=chromeVersions,proto3" json:"chrome_versions,omitempty"`
+	FirefoxVersions []int32                `protobuf:"varint,4,rep,packed,name=firefox_versions,json=firefoxVersions,proto3" json:"firefox_versions,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *SmokeTestRequest) Reset() {
@@ -134,6 +135,13 @@ func (x *SmokeTestRequest) GetAnubisImage() string {
 func (x *SmokeTestRequest) GetChromeVersions() []int32 {
 	if x != nil {
 		return x.ChromeVersions
+	}
+	return nil
+}
+
+func (x *SmokeTestRequest) GetFirefoxVersions() []int32 {
+	if x != nil {
+		return x.FirefoxVersions
 	}
 	return nil
 }
@@ -281,11 +289,12 @@ var File_techaro_lol_gubal_v1_gubal_proto protoreflect.FileDescriptor
 
 const file_techaro_lol_gubal_v1_gubal_proto_rawDesc = "" +
 	"\n" +
-	" techaro/lol/gubal/v1/gubal.proto\x12\x14techaro.lol.gubal.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x93\x01\n" +
+	" techaro/lol/gubal/v1/gubal.proto\x12\x14techaro.lol.gubal.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xce\x01\n" +
 	"\x10SmokeTestRequest\x12\x1b\n" +
 	"\x02id\x18\x01 \x01(\tB\v\xbaH\b\xc8\x01\x01r\x03\xb0\x01\x01R\x02id\x12)\n" +
 	"\fanubis_image\x18\x02 \x01(\tB\x06\xbaH\x03\xc8\x01\x01R\vanubisImage\x127\n" +
-	"\x0fchrome_versions\x18\x03 \x03(\x05B\x0e\xbaH\v\x92\x01\b\b\x01\"\x04\x1a\x02 FR\x0echromeVersions\"\x88\x01\n" +
+	"\x0fchrome_versions\x18\x03 \x03(\x05B\x0e\xbaH\v\x92\x01\b\b\x01\"\x04\x1a\x02 FR\x0echromeVersions\x129\n" +
+	"\x10firefox_versions\x18\x04 \x03(\x05B\x0e\xbaH\v\x92\x01\b\b\x01\"\x04\x1a\x02 eR\x0ffirefoxVersions\"\x88\x01\n" +
 	"\x0fSmokeTestResult\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x16\n" +
 	"\x06report\x18\x02 \x01(\tR\x06report\x12C\n" +
