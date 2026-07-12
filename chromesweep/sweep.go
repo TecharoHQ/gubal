@@ -25,37 +25,32 @@ type baseManifests struct {
 	job        *batchv1.Job
 }
 
-func loadBaseManifests(cfg Config) (baseManifests, error) {
-	dep, err := loadDeployment(cfg.DeploymentManifest, cfg.Namespace)
+func loadBaseManifests(b Browser, namespace string) (baseManifests, error) {
+	dep, err := loadDeployment(b.DeploymentManifest, namespace)
 	if err != nil {
 		return baseManifests{}, err
 	}
-	svc, err := loadService(cfg.ServiceManifest, cfg.Namespace)
+	svc, err := loadService(b.ServiceManifest, namespace)
 	if err != nil {
 		return baseManifests{}, err
 	}
-	np, err := loadNetworkPolicy(cfg.NetworkPolicyManifest, cfg.Namespace)
+	np, err := loadNetworkPolicy(b.NetworkPolicyManifest, namespace)
 	if err != nil {
 		return baseManifests{}, err
 	}
-	job, err := loadJob(cfg.JobManifest, cfg.Namespace)
+	job, err := loadJob(b.JobManifest, namespace)
 	if err != nil {
 		return baseManifests{}, err
 	}
 	return baseManifests{deployment: dep, service: svc, netpol: np, job: job}, nil
 }
 
-// Run tests each version in cfg.Versions in bounded parallel (cfg.Parallelism at
-// once) and returns a Report: one Result per version (in argument order) plus the
-// Anubis image they were tested against. Captured frames are copied into framesDir
-// (a scratch dir the caller owns and bundles/cleans up). A failure on one version
-// is recorded and does not stop the others.
+// Run sweeps every browser in cfg.Browsers against one in-cluster Anubis setup:
+// Anubis is re-imaged (if overridden) and the frame collector is created ONCE,
+// then each browser's versions are tested in a bounded pool of cfg.Parallelism.
+// Captured frames are copied into framesDir. A failure on one version is recorded
+// and does not stop the others. Results are returned browser-then-version ordered.
 func Run(ctx context.Context, c *Cluster, cfg Config, framesDir string) (Report, error) {
-	base, err := loadBaseManifests(cfg)
-	if err != nil {
-		return Report{}, err
-	}
-
 	anubisImage, restoreAnubis, err := prepareAnubis(ctx, c, cfg)
 	if err != nil {
 		return Report{}, err
@@ -75,19 +70,28 @@ func Run(ctx context.Context, c *Cluster, cfg Config, framesDir string) (Report,
 	if parallelism < 1 {
 		parallelism = 1
 	}
-	results := make([]Result, len(cfg.Versions))
-	sem := make(chan struct{}, parallelism)
-	var wg sync.WaitGroup
-	for i, tag := range cfg.Versions {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(i int, tag string) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			results[i] = sweepOne(ctx, c, cfg, base, tag, framesDir)
-		}(i, tag)
+
+	var results []Result
+	for _, b := range cfg.Browsers {
+		base, err := loadBaseManifests(b, cfg.Namespace)
+		if err != nil {
+			return Report{}, err
+		}
+		brResults := make([]Result, len(b.Versions))
+		sem := make(chan struct{}, parallelism)
+		var wg sync.WaitGroup
+		for i, tag := range b.Versions {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(i int, tag string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				brResults[i] = sweepOne(ctx, c, cfg, b, base, tag, framesDir)
+			}(i, tag)
+		}
+		wg.Wait()
+		results = append(results, brResults...)
 	}
-	wg.Wait()
 	return Report{AnubisImage: anubisImage, Results: results}, nil
 }
 
@@ -132,12 +136,12 @@ func prepareAnubis(ctx context.Context, c *Cluster, cfg Config) (image string, r
 	return cfg.AnubisImage, restore, nil
 }
 
-func sweepOne(ctx context.Context, c *Cluster, cfg Config, base baseManifests, tag, framesDir string) Result {
-	name := versionedName(cfg.Deployment, tag) // chrome-<tag>
-	jobName := versionedName(cfg.JobName, tag) // chrome-smoke-<tag>
-	image := fmt.Sprintf("%s:%s", cfg.ImageRepo, tag)
-	res := Result{Tag: tag}
-	log := slog.With("tag", tag, "image", image, "name", name)
+func sweepOne(ctx context.Context, c *Cluster, cfg Config, b Browser, base baseManifests, tag, framesDir string) Result {
+	name := versionedName(b.Deployment, tag) // e.g. chrome-150 / firefox-152
+	jobName := versionedName(b.JobName, tag)  // e.g. chrome-smoke-150
+	image := fmt.Sprintf("%s:%s", b.ImageRepo, tag)
+	res := Result{Browser: b.Name, Tag: tag}
+	log := slog.With("browser", b.Name, "tag", tag, "image", image, "name", name)
 	log.Info("testing version")
 
 	// Tear this version's resources down when done, even on early return. Uses a
@@ -149,7 +153,7 @@ func sweepOne(ctx context.Context, c *Cluster, cfg Config, base baseManifests, t
 	}()
 
 	dep := base.deployment.DeepCopy()
-	retargetDeployment(dep, name, cfg.Container, image)
+	retargetDeployment(dep, name, b.Container, image)
 	if err := c.CreateOrReplaceDeployment(ctx, dep, cfg.ReadyTimeout); err != nil {
 		res.Status, res.Detail = StatusError, err.Error()
 		return res
@@ -172,7 +176,7 @@ func sweepOne(ctx context.Context, c *Cluster, cfg Config, base baseManifests, t
 	}
 
 	job := base.job.DeepCopy()
-	retargetJob(job, jobName, cfg.Deployment, name)
+	retargetJob(job, jobName, b.Deployment, name)
 	if err := c.ReplaceJob(ctx, job); err != nil {
 		res.Status, res.Detail = StatusError, err.Error()
 		return res
@@ -190,8 +194,8 @@ func sweepOne(ctx context.Context, c *Cluster, cfg Config, base baseManifests, t
 	}
 	if bullyLogs, lerr := c.JobContainerLogs(ctx, jobName, "chrome-bully"); lerr == nil {
 		if remote, perr := capturedFramePath(bullyLogs); perr == nil {
-			res.ChromeVersion = versionFromFrame(remote)
-			local := filepath.Join(framesDir, tag+".png")
+			res.BrowserVersion = versionFromFrame(remote)
+			local := filepath.Join(framesDir, localFrameName(b.Name, tag))
 			if cerr := c.CopyFrame(ctx, collectorPodName, remote, local); cerr == nil {
 				res.FramePath = local
 			} else {
@@ -208,6 +212,12 @@ func sweepOne(ctx context.Context, c *Cluster, cfg Config, base baseManifests, t
 		res.Status, res.Detail = StatusFail, "smoke job failed"
 	}
 	return res
+}
+
+// localFrameName is the on-disk name for a captured frame, namespaced by browser
+// so same-numbered tags across browsers (chrome 130 and firefox 130) don't collide.
+func localFrameName(browser, tag string) string {
+	return browser + "-" + tag + ".png"
 }
 
 // versionFromFrame pulls the Chrome version out of a frame path like

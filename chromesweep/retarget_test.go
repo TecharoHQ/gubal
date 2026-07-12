@@ -113,6 +113,21 @@ func TestRetargetJob(t *testing.T) {
 	}
 }
 
+func TestRetargetJobFirefox(t *testing.T) {
+	job := &batchv1.Job{}
+	job.Spec.Template.Spec.Containers = []corev1.Container{{
+		Args: []string{"-cdp-url=http://firefox:9222", "-header=Host: localhost:9222"},
+	}}
+	retargetJob(job, "firefox-smoke-152", "firefox", "firefox-152")
+	got := job.Spec.Template.Spec.Containers[0].Args
+	if got[0] != "-cdp-url=http://firefox-152:9222" {
+		t.Fatalf("cdp url not rewritten: %q", got[0])
+	}
+	if got[1] != "-header=Host: localhost:9222" {
+		t.Fatalf("localhost host must be untouched: %q", got[1])
+	}
+}
+
 func TestLoadManifests(t *testing.T) {
 	dep, err := loadDeployment("../k8s/deployment.yaml", "ci")
 	if err != nil || dep.Name != "chrome" || dep.Namespace != "ci" {

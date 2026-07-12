@@ -15,14 +15,15 @@ const (
 	StatusError    Status = "error"
 )
 
-// Result is the outcome of testing one Chrome tag.
+// Result is the outcome of testing one browser image tag.
 type Result struct {
-	Tag           string `json:"tag"`
-	Status        Status `json:"status"`
-	ChromeVersion string `json:"chrome_version,omitempty"`
-	ReportedUA    string `json:"reported_ua,omitempty"`
-	FramePath     string `json:"frame_path,omitempty"`
-	Detail        string `json:"detail,omitempty"`
+	Browser        string `json:"browser,omitempty"`
+	Tag            string `json:"tag"`
+	Status         Status `json:"status"`
+	BrowserVersion string `json:"browser_version,omitempty"`
+	ReportedUA     string `json:"reported_ua,omitempty"`
+	FramePath      string `json:"frame_path,omitempty"`
+	Detail         string `json:"detail,omitempty"`
 }
 
 // Report is the full outcome of a sweep run: the per-version results plus the
@@ -43,26 +44,47 @@ func (r Report) AllPassed() bool {
 	return true
 }
 
-// RenderMarkdown produces a human-readable summary table.
+// RenderMarkdown produces a human-readable summary: one section per browser (in
+// first-seen order), each with its own pass count and results table.
 func RenderMarkdown(rep Report) string {
 	var b strings.Builder
-	passed := 0
-	for _, r := range rep.Results {
-		if r.Status == StatusPass {
-			passed++
-		}
-	}
-	fmt.Fprintf(&b, "# Chrome version sweep — %d/%d passed\n\n", passed, len(rep.Results))
 	if rep.AnubisImage != "" {
 		fmt.Fprintf(&b, "Anubis image: `%s`\n\n", rep.AnubisImage)
 	}
-	b.WriteString("| tag | status | chrome version | frame | detail |\n")
-	b.WriteString("|-----|--------|----------------|-------|--------|\n")
+	var order []string
+	groups := map[string][]Result{}
 	for _, r := range rep.Results {
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n",
-			r.Tag, r.Status, dash(r.ChromeVersion), dash(r.FramePath), dash(r.Detail))
+		if _, ok := groups[r.Browser]; !ok {
+			order = append(order, r.Browser)
+		}
+		groups[r.Browser] = append(groups[r.Browser], r)
+	}
+	for _, br := range order {
+		rs := groups[br]
+		passed := 0
+		for _, r := range rs {
+			if r.Status == StatusPass {
+				passed++
+			}
+		}
+		fmt.Fprintf(&b, "# %s version sweep — %d/%d passed\n\n", titleCase(br), passed, len(rs))
+		b.WriteString("| tag | status | browser version | frame | detail |\n")
+		b.WriteString("|-----|--------|-----------------|-------|--------|\n")
+		for _, r := range rs {
+			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n",
+				r.Tag, r.Status, dash(r.BrowserVersion), dash(r.FramePath), dash(r.Detail))
+		}
+		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// titleCase upper-cases the first byte of s ("chrome" -> "Chrome").
+func titleCase(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func dash(s string) string {
