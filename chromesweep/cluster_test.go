@@ -126,3 +126,111 @@ func TestDeleteVersionResourcesRemovesSet(t *testing.T) {
 		t.Fatalf("second delete should tolerate NotFound: %v", err)
 	}
 }
+
+func TestCreateOrReplaceConfigMap(t *testing.T) {
+	cs := fake.NewSimpleClientset()
+	c := NewCluster(cs, "ci")
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "anubis-policy-default"},
+		Data:       map[string]string{"botPolicies.yaml": "bots: []"},
+	}
+	if err := c.CreateOrReplaceConfigMap(context.Background(), cm); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// Replace with new content: no error, content updated in place.
+	cm2 := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "anubis-policy-default"},
+		Data:       map[string]string{"botPolicies.yaml": "bots: [changed]"},
+	}
+	if err := c.CreateOrReplaceConfigMap(context.Background(), cm2); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	got, err := cs.CoreV1().ConfigMaps("ci").Get(context.Background(), "anubis-policy-default", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Data["botPolicies.yaml"] != "bots: [changed]" {
+		t.Fatalf("content = %q, want replaced", got.Data["botPolicies.yaml"])
+	}
+}
+
+func TestSetAnubisPolicyAndRestore(t *testing.T) {
+	dep := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "anubis", Namespace: "ci"},
+		Spec: appsv1.DeploymentSpec{
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "anubis", Image: "anubis:orig", Env: []corev1.EnvVar{{Name: "BIND", Value: ":8080"}}},
+					},
+				},
+			},
+		},
+	}
+	cs := fake.NewSimpleClientset(dep)
+	c := NewCluster(cs, "ci")
+
+	snap, err := c.SnapshotPodTemplate(context.Background(), "anubis")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	if err := c.SetAnubisPolicy(context.Background(), "anubis", "anubis", "anubis-policy-default"); err != nil {
+		t.Fatalf("SetAnubisPolicy: %v", err)
+	}
+	got, _ := cs.AppsV1().Deployments("ci").Get(context.Background(), "anubis", metav1.GetOptions{})
+	ct := got.Spec.Template.Spec.Containers[0]
+
+	var envVal string
+	for _, e := range ct.Env {
+		if e.Name == "POLICY_FNAME" {
+			envVal = e.Value
+		}
+	}
+	if envVal != "/policy/botPolicies.yaml" {
+		t.Fatalf("POLICY_FNAME = %q, want /policy/botPolicies.yaml", envVal)
+	}
+	if len(ct.VolumeMounts) != 1 || ct.VolumeMounts[0].Name != "anubis-policy" || ct.VolumeMounts[0].MountPath != "/policy" {
+		t.Fatalf("volumeMount = %+v", ct.VolumeMounts)
+	}
+	vols := got.Spec.Template.Spec.Volumes
+	if len(vols) != 1 || vols[0].Name != "anubis-policy" || vols[0].ConfigMap == nil || vols[0].ConfigMap.Name != "anubis-policy-default" {
+		t.Fatalf("volumes = %+v", vols)
+	}
+	// The pre-existing env var must survive.
+	found := false
+	for _, e := range ct.Env {
+		if e.Name == "BIND" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("existing BIND env var was dropped")
+	}
+
+	// Re-applying a different policy must not duplicate volume/mount/env, only swap the CM name.
+	if err := c.SetAnubisPolicy(context.Background(), "anubis", "anubis", "anubis-policy-hard"); err != nil {
+		t.Fatalf("SetAnubisPolicy #2: %v", err)
+	}
+	got, _ = cs.AppsV1().Deployments("ci").Get(context.Background(), "anubis", metav1.GetOptions{})
+	if v := got.Spec.Template.Spec.Volumes; len(v) != 1 || v[0].ConfigMap.Name != "anubis-policy-hard" {
+		t.Fatalf("volumes after re-apply = %+v", v)
+	}
+	if m := got.Spec.Template.Spec.Containers[0].VolumeMounts; len(m) != 1 {
+		t.Fatalf("volumeMounts duplicated: %+v", m)
+	}
+
+	// Restore returns the template to the original (no POLICY_FNAME, no policy volume).
+	if err := c.RestorePodTemplate(context.Background(), "anubis", snap); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	got, _ = cs.AppsV1().Deployments("ci").Get(context.Background(), "anubis", metav1.GetOptions{})
+	if len(got.Spec.Template.Spec.Volumes) != 0 {
+		t.Fatalf("restore left volumes: %+v", got.Spec.Template.Spec.Volumes)
+	}
+	for _, e := range got.Spec.Template.Spec.Containers[0].Env {
+		if e.Name == "POLICY_FNAME" {
+			t.Fatal("restore left POLICY_FNAME set")
+		}
+	}
+}

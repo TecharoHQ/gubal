@@ -376,3 +376,139 @@ func (c *Cluster) CopyFrame(ctx context.Context, collector, remotePath, localPat
 	}
 	return nil
 }
+
+// Anubis policy wiring: a per-policy ConfigMap is mounted into the Anubis
+// container at anubisPolicyMountPath and pointed at via the POLICY_FNAME env var.
+const (
+	anubisPolicyVolume    = "anubis-policy"
+	anubisPolicyMountPath = "/policy"
+	anubisPolicyFileName  = "botPolicies.yaml"
+	anubisPolicyEnvVar    = "POLICY_FNAME"
+)
+
+// CreateOrReplaceConfigMap creates cm, or updates it in place if one of the same
+// name already exists (ConfigMaps have no immutable spec to fight, so update is
+// safe and avoids a delete/recreate race).
+func (c *Cluster) CreateOrReplaceConfigMap(ctx context.Context, cm *corev1.ConfigMap) error {
+	cm.Namespace = c.ns
+	api := c.cs.CoreV1().ConfigMaps(c.ns)
+	existing, err := api.Get(ctx, cm.Name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		if _, cerr := api.Create(ctx, cm, metav1.CreateOptions{}); cerr != nil {
+			return fmt.Errorf("creating configmap %s: %w", cm.Name, cerr)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("getting configmap %s: %w", cm.Name, err)
+	}
+	cm.ResourceVersion = existing.ResourceVersion
+	if _, uerr := api.Update(ctx, cm, metav1.UpdateOptions{}); uerr != nil {
+		return fmt.Errorf("updating configmap %s: %w", cm.Name, uerr)
+	}
+	return nil
+}
+
+// SnapshotPodTemplate returns a deep copy of a Deployment's pod template so later
+// image/policy edits can be reverted with RestorePodTemplate.
+func (c *Cluster) SnapshotPodTemplate(ctx context.Context, deployment string) (*corev1.PodTemplateSpec, error) {
+	d, err := c.cs.AppsV1().Deployments(c.ns).Get(ctx, deployment, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return d.Spec.Template.DeepCopy(), nil
+}
+
+// RestorePodTemplate sets a Deployment's pod template back to a snapshot, reverting
+// any image/env/volume changes made during a sweep. The caller should
+// WaitDeploymentReady afterward.
+func (c *Cluster) RestorePodTemplate(ctx context.Context, deployment string, tmpl *corev1.PodTemplateSpec) error {
+	api := c.cs.AppsV1().Deployments(c.ns)
+	d, err := api.Get(ctx, deployment, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	d.Spec.Template = *tmpl
+	if _, err := api.Update(ctx, d, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("restoring %s pod template: %w", deployment, err)
+	}
+	return nil
+}
+
+// SetAnubisPolicy points the named container of the Anubis Deployment at the policy
+// file carried by configMapName. It upserts the POLICY_FNAME env var, a read-only
+// volumeMount at anubisPolicyMountPath, and a ConfigMap-backed volume — so calling
+// it repeatedly with different ConfigMap names only swaps the mounted file (no
+// duplicated volumes/mounts). Changing configMapName changes the pod template, so
+// the caller should WaitDeploymentReady after.
+func (c *Cluster) SetAnubisPolicy(ctx context.Context, deployment, container, configMapName string) error {
+	api := c.cs.AppsV1().Deployments(c.ns)
+	d, err := api.Get(ctx, deployment, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+	found := false
+	for i := range d.Spec.Template.Spec.Containers {
+		ct := &d.Spec.Template.Spec.Containers[i]
+		if ct.Name != container {
+			continue
+		}
+		found = true
+		ct.Env = upsertEnv(ct.Env, anubisPolicyEnvVar, anubisPolicyMountPath+"/"+anubisPolicyFileName)
+		ct.VolumeMounts = upsertVolumeMount(ct.VolumeMounts, corev1.VolumeMount{
+			Name: anubisPolicyVolume, MountPath: anubisPolicyMountPath, ReadOnly: true,
+		})
+	}
+	if !found {
+		return fmt.Errorf("container %q not found in deployment %s", container, deployment)
+	}
+	d.Spec.Template.Spec.Volumes = upsertConfigMapVolume(d.Spec.Template.Spec.Volumes, anubisPolicyVolume, configMapName)
+	if _, err := api.Update(ctx, d, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("setting anubis policy on %s: %w", deployment, err)
+	}
+	return nil
+}
+
+// upsertEnv sets name=value in env, replacing an existing entry (clearing any
+// ValueFrom) or appending a new one.
+func upsertEnv(env []corev1.EnvVar, name, value string) []corev1.EnvVar {
+	for i := range env {
+		if env[i].Name == name {
+			env[i].Value = value
+			env[i].ValueFrom = nil
+			return env
+		}
+	}
+	return append(env, corev1.EnvVar{Name: name, Value: value})
+}
+
+// upsertVolumeMount replaces the mount with the same Name, or appends it.
+func upsertVolumeMount(mounts []corev1.VolumeMount, m corev1.VolumeMount) []corev1.VolumeMount {
+	for i := range mounts {
+		if mounts[i].Name == m.Name {
+			mounts[i] = m
+			return mounts
+		}
+	}
+	return append(mounts, m)
+}
+
+// upsertConfigMapVolume sets vols[name] to a ConfigMap-backed volume for
+// configMapName, replacing any existing volume of that Name or appending one.
+func upsertConfigMapVolume(vols []corev1.Volume, name, configMapName string) []corev1.Volume {
+	v := corev1.Volume{
+		Name: name,
+		VolumeSource: corev1.VolumeSource{
+			ConfigMap: &corev1.ConfigMapVolumeSource{
+				LocalObjectReference: corev1.LocalObjectReference{Name: configMapName},
+			},
+		},
+	}
+	for i := range vols {
+		if vols[i].Name == name {
+			vols[i] = v
+			return vols
+		}
+	}
+	return append(vols, v)
+}
