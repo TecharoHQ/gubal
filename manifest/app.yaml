@@ -29,6 +29,11 @@ spec:
     enabled: true
     host: gubald.xeserv.us
 
+  secrets:
+    - name: iamd-secrets
+      itemPath: "vaults/lc5zo4zjz3if3mkeuhufjmgmui/items/qixh7q3ibx4gwggq3syn7vzxnq"
+      environment: true
+
   env:
     - name: REGION
       value: yow
