@@ -14,6 +14,7 @@ const packages = methods.map(([goos, goarch, methods]) => {
       license: "MIT",
       platform: goos,
       goarch,
+      version: "0.0.0",
 
       build: ({ bin, etc, systemd, doc }) => {
         $`go build -trimpath -o ${bin}/gubalctl${exe} -ldflags '-s -w -extldflags "-static"' ./cmd/gubalctl`;
@@ -21,3 +22,6 @@ const packages = methods.map(([goos, goarch, methods]) => {
     });
   });
 });
+
+$`AWS_PROFILE=tigris aws s3 cp ./var/gubalctl_0.0.0_amd64.deb s3://xedn/dl/gubalctl/gubalctl_0.0.0_amd64.deb`;
+$`AWS_PROFILE=tigris aws s3 cp ./var/gubalctl_0.0.0_arm64.deb s3://xedn/dl/gubalctl/gubalctl_0.0.0_arm64.deb`;
