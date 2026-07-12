@@ -18,6 +18,10 @@ message SmokeTestRequest {
     (buf.validate.field).repeated.min_items = 1,
     (buf.validate.field).repeated.items.int32.gt = 70
   ];
+  repeated int32 firefox_versions = 4 [
+    (buf.validate.field).repeated.min_items = 1,
+    (buf.validate.field).repeated.items.int32.gt = 101
+  ];
 }
 
 message SmokeTestResult {
