@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SmokeTestService_SmokeTest_FullMethodName = "/techaro.lol.gubal.v1.SmokeTestService/SmokeTest"
+	SmokeTestService_SmokeTest_FullMethodName       = "/techaro.lol.gubal.v1.SmokeTestService/SmokeTest"
+	SmokeTestService_SubmitSmokeTest_FullMethodName = "/techaro.lol.gubal.v1.SmokeTestService/SubmitSmokeTest"
 )
 
 // SmokeTestServiceClient is the client API for SmokeTestService service.
@@ -27,6 +28,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type SmokeTestServiceClient interface {
 	SmokeTest(ctx context.Context, in *SmokeTestRequest, opts ...grpc.CallOption) (*SmokeTestResult, error)
+	SubmitSmokeTest(ctx context.Context, in *SubmitSmokeTestRequest, opts ...grpc.CallOption) (*SubmitSmokeTestResponse, error)
 }
 
 type smokeTestServiceClient struct {
@@ -47,11 +49,22 @@ func (c *smokeTestServiceClient) SmokeTest(ctx context.Context, in *SmokeTestReq
 	return out, nil
 }
 
+func (c *smokeTestServiceClient) SubmitSmokeTest(ctx context.Context, in *SubmitSmokeTestRequest, opts ...grpc.CallOption) (*SubmitSmokeTestResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SubmitSmokeTestResponse)
+	err := c.cc.Invoke(ctx, SmokeTestService_SubmitSmokeTest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SmokeTestServiceServer is the server API for SmokeTestService service.
 // All implementations must embed UnimplementedSmokeTestServiceServer
 // for forward compatibility.
 type SmokeTestServiceServer interface {
 	SmokeTest(context.Context, *SmokeTestRequest) (*SmokeTestResult, error)
+	SubmitSmokeTest(context.Context, *SubmitSmokeTestRequest) (*SubmitSmokeTestResponse, error)
 	mustEmbedUnimplementedSmokeTestServiceServer()
 }
 
@@ -64,6 +77,9 @@ type UnimplementedSmokeTestServiceServer struct{}
 
 func (UnimplementedSmokeTestServiceServer) SmokeTest(context.Context, *SmokeTestRequest) (*SmokeTestResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method SmokeTest not implemented")
+}
+func (UnimplementedSmokeTestServiceServer) SubmitSmokeTest(context.Context, *SubmitSmokeTestRequest) (*SubmitSmokeTestResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SubmitSmokeTest not implemented")
 }
 func (UnimplementedSmokeTestServiceServer) mustEmbedUnimplementedSmokeTestServiceServer() {}
 func (UnimplementedSmokeTestServiceServer) testEmbeddedByValue()                          {}
@@ -104,6 +120,24 @@ func _SmokeTestService_SmokeTest_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SmokeTestService_SubmitSmokeTest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubmitSmokeTestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SmokeTestServiceServer).SubmitSmokeTest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SmokeTestService_SubmitSmokeTest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SmokeTestServiceServer).SubmitSmokeTest(ctx, req.(*SubmitSmokeTestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SmokeTestService_ServiceDesc is the grpc.ServiceDesc for SmokeTestService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -114,6 +148,10 @@ var SmokeTestService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SmokeTest",
 			Handler:    _SmokeTestService_SmokeTest_Handler,
+		},
+		{
+			MethodName: "SubmitSmokeTest",
+			Handler:    _SmokeTestService_SubmitSmokeTest_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

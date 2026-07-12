@@ -301,6 +301,174 @@ func (x *ChromeVersionResult) GetPolicy() string {
 	return ""
 }
 
+// SubmitSmokeTestRequest is the async counterpart of SmokeTestRequest: the same
+// sweep parameters plus the GitHub PR thread gubald posts results to.
+type SubmitSmokeTestRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Test          *SmokeTestRequest      `protobuf:"bytes,1,opt,name=test,proto3" json:"test,omitempty"`
+	Github        *GitHubTarget          `protobuf:"bytes,2,opt,name=github,proto3" json:"github,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitSmokeTestRequest) Reset() {
+	*x = SubmitSmokeTestRequest{}
+	mi := &file_techaro_lol_gubal_v1_gubal_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitSmokeTestRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitSmokeTestRequest) ProtoMessage() {}
+
+func (x *SubmitSmokeTestRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_techaro_lol_gubal_v1_gubal_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitSmokeTestRequest.ProtoReflect.Descriptor instead.
+func (*SubmitSmokeTestRequest) Descriptor() ([]byte, []int) {
+	return file_techaro_lol_gubal_v1_gubal_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *SubmitSmokeTestRequest) GetTest() *SmokeTestRequest {
+	if x != nil {
+		return x.Test
+	}
+	return nil
+}
+
+func (x *SubmitSmokeTestRequest) GetGithub() *GitHubTarget {
+	if x != nil {
+		return x.Github
+	}
+	return nil
+}
+
+// GitHubTarget names the PR thread to comment on.
+type GitHubTarget struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// "owner/repo" — matches the GITHUB_REPO env var and gubald's allowlist format.
+	Repo          string `protobuf:"bytes,1,opt,name=repo,proto3" json:"repo,omitempty"`
+	PrNumber      int32  `protobuf:"varint,2,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
+	CommitSha     string `protobuf:"bytes,3,opt,name=commit_sha,json=commitSha,proto3" json:"commit_sha,omitempty"` // optional, shown in the ack/report for traceability
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GitHubTarget) Reset() {
+	*x = GitHubTarget{}
+	mi := &file_techaro_lol_gubal_v1_gubal_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GitHubTarget) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GitHubTarget) ProtoMessage() {}
+
+func (x *GitHubTarget) ProtoReflect() protoreflect.Message {
+	mi := &file_techaro_lol_gubal_v1_gubal_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GitHubTarget.ProtoReflect.Descriptor instead.
+func (*GitHubTarget) Descriptor() ([]byte, []int) {
+	return file_techaro_lol_gubal_v1_gubal_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *GitHubTarget) GetRepo() string {
+	if x != nil {
+		return x.Repo
+	}
+	return ""
+}
+
+func (x *GitHubTarget) GetPrNumber() int32 {
+	if x != nil {
+		return x.PrNumber
+	}
+	return 0
+}
+
+func (x *GitHubTarget) GetCommitSha() string {
+	if x != nil {
+		return x.CommitSha
+	}
+	return ""
+}
+
+type SubmitSmokeTestResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`              // echoes test.id
+	Accepted      bool                   `protobuf:"varint,2,opt,name=accepted,proto3" json:"accepted,omitempty"` // true; a busy server returns a ResourceExhausted error instead
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitSmokeTestResponse) Reset() {
+	*x = SubmitSmokeTestResponse{}
+	mi := &file_techaro_lol_gubal_v1_gubal_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitSmokeTestResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitSmokeTestResponse) ProtoMessage() {}
+
+func (x *SubmitSmokeTestResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_techaro_lol_gubal_v1_gubal_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitSmokeTestResponse.ProtoReflect.Descriptor instead.
+func (*SubmitSmokeTestResponse) Descriptor() ([]byte, []int) {
+	return file_techaro_lol_gubal_v1_gubal_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *SubmitSmokeTestResponse) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *SubmitSmokeTestResponse) GetAccepted() bool {
+	if x != nil {
+		return x.Accepted
+	}
+	return false
+}
+
 var File_techaro_lol_gubal_v1_gubal_proto protoreflect.FileDescriptor
 
 const file_techaro_lol_gubal_v1_gubal_proto_rawDesc = "" +
@@ -323,15 +491,27 @@ const file_techaro_lol_gubal_v1_gubal_proto_rawDesc = "" +
 	"reportedUa\x12\x16\n" +
 	"\x06detail\x18\x05 \x01(\tR\x06detail\x12\x18\n" +
 	"\abrowser\x18\x06 \x01(\tR\abrowser\x12\x16\n" +
-	"\x06policy\x18\a \x01(\tR\x06policy*\x8d\x01\n" +
+	"\x06policy\x18\a \x01(\tR\x06policy\"\xa0\x01\n" +
+	"\x16SubmitSmokeTestRequest\x12B\n" +
+	"\x04test\x18\x01 \x01(\v2&.techaro.lol.gubal.v1.SmokeTestRequestB\x06\xbaH\x03\xc8\x01\x01R\x04test\x12B\n" +
+	"\x06github\x18\x02 \x01(\v2\".techaro.lol.gubal.v1.GitHubTargetB\x06\xbaH\x03\xc8\x01\x01R\x06github\"\x80\x01\n" +
+	"\fGitHubTarget\x12+\n" +
+	"\x04repo\x18\x01 \x01(\tB\x17\xbaH\x14\xc8\x01\x01r\x0f2\r^[^/]+/[^/]+$R\x04repo\x12$\n" +
+	"\tpr_number\x18\x02 \x01(\x05B\a\xbaH\x04\x1a\x02 \x00R\bprNumber\x12\x1d\n" +
+	"\n" +
+	"commit_sha\x18\x03 \x01(\tR\tcommitSha\"E\n" +
+	"\x17SubmitSmokeTestResponse\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
+	"\baccepted\x18\x02 \x01(\bR\baccepted*\x8d\x01\n" +
 	"\vSweepStatus\x12\x1c\n" +
 	"\x18SWEEP_STATUS_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11SWEEP_STATUS_PASS\x10\x01\x12\x15\n" +
 	"\x11SWEEP_STATUS_FAIL\x10\x02\x12\x1a\n" +
 	"\x16SWEEP_STATUS_NOT_READY\x10\x03\x12\x16\n" +
-	"\x12SWEEP_STATUS_ERROR\x10\x042p\n" +
+	"\x12SWEEP_STATUS_ERROR\x10\x042\xe2\x01\n" +
 	"\x10SmokeTestService\x12\\\n" +
-	"\tSmokeTest\x12&.techaro.lol.gubal.v1.SmokeTestRequest\x1a%.techaro.lol.gubal.v1.SmokeTestResult\"\x00B\xd6\x01\n" +
+	"\tSmokeTest\x12&.techaro.lol.gubal.v1.SmokeTestRequest\x1a%.techaro.lol.gubal.v1.SmokeTestResult\"\x00\x12p\n" +
+	"\x0fSubmitSmokeTest\x12,.techaro.lol.gubal.v1.SubmitSmokeTestRequest\x1a-.techaro.lol.gubal.v1.SubmitSmokeTestResponse\"\x00B\xd6\x01\n" +
 	"\x18com.techaro.lol.gubal.v1B\n" +
 	"GubalProtoP\x01Z;github.com/TecharoHQ/gubal/gen/techaro/lol/gubal/v1;gubalv1\xa2\x02\x03TLG\xaa\x02\x14Techaro.Lol.Gubal.V1\xca\x02\x14Techaro\\Lol\\Gubal\\V1\xe2\x02 Techaro\\Lol\\Gubal\\V1\\GPBMetadata\xea\x02\x17Techaro::Lol::Gubal::V1b\x06proto3"
 
@@ -348,23 +528,30 @@ func file_techaro_lol_gubal_v1_gubal_proto_rawDescGZIP() []byte {
 }
 
 var file_techaro_lol_gubal_v1_gubal_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_techaro_lol_gubal_v1_gubal_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_techaro_lol_gubal_v1_gubal_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_techaro_lol_gubal_v1_gubal_proto_goTypes = []any{
-	(SweepStatus)(0),            // 0: techaro.lol.gubal.v1.SweepStatus
-	(*SmokeTestRequest)(nil),    // 1: techaro.lol.gubal.v1.SmokeTestRequest
-	(*SmokeTestResult)(nil),     // 2: techaro.lol.gubal.v1.SmokeTestResult
-	(*ChromeVersionResult)(nil), // 3: techaro.lol.gubal.v1.ChromeVersionResult
+	(SweepStatus)(0),                // 0: techaro.lol.gubal.v1.SweepStatus
+	(*SmokeTestRequest)(nil),        // 1: techaro.lol.gubal.v1.SmokeTestRequest
+	(*SmokeTestResult)(nil),         // 2: techaro.lol.gubal.v1.SmokeTestResult
+	(*ChromeVersionResult)(nil),     // 3: techaro.lol.gubal.v1.ChromeVersionResult
+	(*SubmitSmokeTestRequest)(nil),  // 4: techaro.lol.gubal.v1.SubmitSmokeTestRequest
+	(*GitHubTarget)(nil),            // 5: techaro.lol.gubal.v1.GitHubTarget
+	(*SubmitSmokeTestResponse)(nil), // 6: techaro.lol.gubal.v1.SubmitSmokeTestResponse
 }
 var file_techaro_lol_gubal_v1_gubal_proto_depIdxs = []int32{
 	3, // 0: techaro.lol.gubal.v1.SmokeTestResult.results:type_name -> techaro.lol.gubal.v1.ChromeVersionResult
 	0, // 1: techaro.lol.gubal.v1.ChromeVersionResult.status:type_name -> techaro.lol.gubal.v1.SweepStatus
-	1, // 2: techaro.lol.gubal.v1.SmokeTestService.SmokeTest:input_type -> techaro.lol.gubal.v1.SmokeTestRequest
-	2, // 3: techaro.lol.gubal.v1.SmokeTestService.SmokeTest:output_type -> techaro.lol.gubal.v1.SmokeTestResult
-	3, // [3:4] is the sub-list for method output_type
-	2, // [2:3] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	1, // 2: techaro.lol.gubal.v1.SubmitSmokeTestRequest.test:type_name -> techaro.lol.gubal.v1.SmokeTestRequest
+	5, // 3: techaro.lol.gubal.v1.SubmitSmokeTestRequest.github:type_name -> techaro.lol.gubal.v1.GitHubTarget
+	1, // 4: techaro.lol.gubal.v1.SmokeTestService.SmokeTest:input_type -> techaro.lol.gubal.v1.SmokeTestRequest
+	4, // 5: techaro.lol.gubal.v1.SmokeTestService.SubmitSmokeTest:input_type -> techaro.lol.gubal.v1.SubmitSmokeTestRequest
+	2, // 6: techaro.lol.gubal.v1.SmokeTestService.SmokeTest:output_type -> techaro.lol.gubal.v1.SmokeTestResult
+	6, // 7: techaro.lol.gubal.v1.SmokeTestService.SubmitSmokeTest:output_type -> techaro.lol.gubal.v1.SubmitSmokeTestResponse
+	6, // [6:8] is the sub-list for method output_type
+	4, // [4:6] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_techaro_lol_gubal_v1_gubal_proto_init() }
@@ -378,7 +565,7 @@ func file_techaro_lol_gubal_v1_gubal_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_techaro_lol_gubal_v1_gubal_proto_rawDesc), len(file_techaro_lol_gubal_v1_gubal_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   3,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

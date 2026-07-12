@@ -6,6 +6,7 @@ import "google/protobuf/timestamp.proto";
 
 service SmokeTestService {
   rpc SmokeTest(SmokeTestRequest) returns (SmokeTestResult) {}
+  rpc SubmitSmokeTest(SubmitSmokeTestRequest) returns (SubmitSmokeTestResponse) {}
 }
 
 message SmokeTestRequest {
@@ -41,6 +42,29 @@ message ChromeVersionResult {
   string detail = 5;
   string browser = 6; // "chrome" / "firefox"
   string policy = 7;  // Anubis ruleset this result was tested against ("" if none)
+}
+
+// SubmitSmokeTestRequest is the async counterpart of SmokeTestRequest: the same
+// sweep parameters plus the GitHub PR thread gubald posts results to.
+message SubmitSmokeTestRequest {
+  SmokeTestRequest test = 1 [(buf.validate.field).required = true];
+  GitHubTarget github = 2 [(buf.validate.field).required = true];
+}
+
+// GitHubTarget names the PR thread to comment on.
+message GitHubTarget {
+  // "owner/repo" — matches the GITHUB_REPO env var and gubald's allowlist format.
+  string repo = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.pattern = "^[^/]+/[^/]+$"
+  ];
+  int32 pr_number = 2 [(buf.validate.field).int32.gt = 0];
+  string commit_sha = 3; // optional, shown in the ack/report for traceability
+}
+
+message SubmitSmokeTestResponse {
+  string id = 1;      // echoes test.id
+  bool accepted = 2;  // true; a busy server returns a ResourceExhausted error instead
 }
 
 enum SweepStatus {

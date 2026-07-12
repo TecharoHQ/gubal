@@ -84,3 +84,53 @@ func TestBrowsersFor(t *testing.T) {
 		t.Fatalf("firefox versions = %v", bs[1].Versions)
 	}
 }
+
+// TestSubmitSmokeTestRequestValidation guards the buf.validate rules on the async
+// request; protovalidate compiles rules at first validation, so a malformed rule
+// would only surface here.
+func TestSubmitSmokeTestRequestValidation(t *testing.T) {
+	t.Parallel()
+
+	valid := &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "x", ChromeVersions: []int32{120}, FirefoxVersions: []int32{140}}
+
+	for _, tt := range []struct {
+		name    string
+		req     *gubalv1.SubmitSmokeTestRequest
+		wantErr bool
+	}{
+		{
+			name: "valid",
+			req:  &gubalv1.SubmitSmokeTestRequest{Test: valid, Github: &gubalv1.GitHubTarget{Repo: "TecharoHQ/anubis", PrNumber: 1741}},
+		},
+		{
+			name:    "missing github",
+			req:     &gubalv1.SubmitSmokeTestRequest{Test: valid},
+			wantErr: true,
+		},
+		{
+			name:    "repo without slash",
+			req:     &gubalv1.SubmitSmokeTestRequest{Test: valid, Github: &gubalv1.GitHubTarget{Repo: "anubis", PrNumber: 1}},
+			wantErr: true,
+		},
+		{
+			name:    "pr number not positive",
+			req:     &gubalv1.SubmitSmokeTestRequest{Test: valid, Github: &gubalv1.GitHubTarget{Repo: "TecharoHQ/anubis", PrNumber: 0}},
+			wantErr: true,
+		},
+		{
+			name:    "bad inner test",
+			req:     &gubalv1.SubmitSmokeTestRequest{Test: &gubalv1.SmokeTestRequest{Id: "nope"}, Github: &gubalv1.GitHubTarget{Repo: "TecharoHQ/anubis", PrNumber: 1}},
+			wantErr: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := protovalidate.Validate(tt.req)
+			if (err != nil) != tt.wantErr {
+				t.Logf("want error: %v", tt.wantErr)
+				t.Logf("got:  %v", err)
+				t.Fatal("wrong validation result")
+			}
+		})
+	}
+}
