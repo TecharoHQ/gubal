@@ -31,7 +31,7 @@ var (
 	service         = flag.String("service", "gubal", "SigV4A service name gubald verifies")
 	anubisImage     = flag.String("anubis-image", "", "Anubis image to test against")
 	chromeVersions  = flag.String("chrome-versions", "75,80,85,90,95,100,105,110,115,120,125,130,135,140,145,150", "comma-separated Chrome major versions to test")
-	firefoxVersions = flag.String("firefox-versions", "129,135,140,145,150,152", "comma-separated Firefox major versions to test")
+	firefoxVersions = flag.String("firefox-versions", "146,147,148,149,150,151,152", "comma-separated Firefox major versions to test")
 	id              = flag.String("id", "", "request id (UUID); generated when empty")
 )
 

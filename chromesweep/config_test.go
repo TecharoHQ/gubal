@@ -30,7 +30,7 @@ func TestBrowserPresets(t *testing.T) {
 	if f.DeploymentManifest != "k8s/firefox/deployment.yaml" || f.JobManifest != "k8s/firefox/smoke-job.yaml" {
 		t.Fatalf("firefox manifests wrong: %+v", f)
 	}
-	if strings.Join(f.Versions, ",") != "129,135,140,145,150,152" {
+	if strings.Join(f.Versions, ",") != "146,147,148,149,150,151,152" {
 		t.Fatalf("firefox default versions = %v", f.Versions)
 	}
 }
