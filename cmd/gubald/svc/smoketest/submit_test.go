@@ -49,7 +49,7 @@ func validSubmit() *gubalv1.SubmitSmokeTestRequest {
 
 func TestSubmitRejectsDisallowedRepo(t *testing.T) {
 	fc := &fakeCommenter{}
-	s := New(fc, []string{"TecharoHQ/anubis"}, time.Minute)
+	s := New(fc, noopUploader{}, []string{"TecharoHQ/anubis"}, time.Minute)
 
 	req := validSubmit()
 	req.Github.Repo = "evil/repo"
@@ -68,7 +68,7 @@ func TestSubmitRejectsDisallowedRepo(t *testing.T) {
 
 func TestSubmitBusyPostsNote(t *testing.T) {
 	fc := &fakeCommenter{}
-	s := New(fc, []string{"TecharoHQ/anubis"}, time.Minute)
+	s := New(fc, noopUploader{}, []string{"TecharoHQ/anubis"}, time.Minute)
 
 	// Occupy the sweep semaphore so the submit sees the server as busy.
 	sweepSem <- struct{}{}
@@ -92,7 +92,7 @@ func TestSubmitBusyPostsNote(t *testing.T) {
 
 func TestSubmitInvalidRequest(t *testing.T) {
 	fc := &fakeCommenter{}
-	s := New(fc, []string{"TecharoHQ/anubis"}, time.Minute)
+	s := New(fc, noopUploader{}, []string{"TecharoHQ/anubis"}, time.Minute)
 
 	_, err := s.SubmitSmokeTest(context.Background(), &gubalv1.SubmitSmokeTestRequest{})
 	if err == nil {

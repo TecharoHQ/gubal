@@ -30,11 +30,11 @@ func TestBodyBusy(t *testing.T) {
 
 func TestBodyResult(t *testing.T) {
 	t.Parallel()
-	pass := bodyResult(true, "REPORT_MD", "sha1")
+	pass := bodyResult(true, "REPORT_MD", "sha1", "")
 	if !strings.Contains(pass, "✅") || !strings.Contains(pass, "REPORT_MD") {
 		t.Fatalf("pass body wrong: %q", pass)
 	}
-	fail := bodyResult(false, "REPORT_MD", "sha1")
+	fail := bodyResult(false, "REPORT_MD", "sha1", "")
 	if !strings.Contains(fail, "❌") || !strings.Contains(fail, "REPORT_MD") {
 		t.Fatalf("fail body wrong: %q", fail)
 	}
@@ -48,14 +48,14 @@ func TestBodyRunError(t *testing.T) {
 	}
 }
 
-func TestCapBody(t *testing.T) {
+func TestCapTo(t *testing.T) {
 	t.Parallel()
 	small := "hello"
-	if capBody(small) != small {
+	if capTo(small, maxCommentBytes) != small {
 		t.Fatal("small body should pass through unchanged")
 	}
 	big := strings.Repeat("x", maxCommentBytes+1000)
-	got := capBody(big)
+	got := capTo(big, maxCommentBytes)
 	if len(got) > maxCommentBytes {
 		t.Fatalf("capped body still too long: %d", len(got))
 	}
@@ -66,11 +66,35 @@ func TestCapBody(t *testing.T) {
 
 func TestBodyResultTruncatesLargeReport(t *testing.T) {
 	t.Parallel()
-	body := bodyResult(true, strings.Repeat("R", maxCommentBytes+5000), "sha1")
+	body := bodyResult(true, strings.Repeat("R", maxCommentBytes+5000), "sha1", "")
 	if len(body) > maxCommentBytes {
 		t.Fatalf("result body over limit: %d", len(body))
 	}
 	if !strings.Contains(body, "truncated") {
 		t.Fatal("expected truncation note")
+	}
+}
+
+func TestBodyResultBundleLink(t *testing.T) {
+	t.Parallel()
+	b := bodyResult(true, "REPORT", "sha1", "https://techaro-gubal.t3.storage.dev/pr-1/abc.zip")
+	if !strings.Contains(b, "📦") || !strings.Contains(b, "pr-1/abc.zip") {
+		t.Fatalf("missing bundle link: %q", b)
+	}
+	// No link when URL is empty.
+	if strings.Contains(bodyResult(true, "REPORT", "sha1", ""), "📦") {
+		t.Fatal("unexpected bundle marker with empty URL")
+	}
+}
+
+func TestBodyResultBundleLinkSurvivesTruncation(t *testing.T) {
+	t.Parallel()
+	url := "https://techaro-gubal.t3.storage.dev/pr-1/abc.zip"
+	b := bodyResult(true, strings.Repeat("R", maxCommentBytes+5000), "sha1", url)
+	if len(b) > maxCommentBytes {
+		t.Fatalf("over limit: %d", len(b))
+	}
+	if !strings.Contains(b, url) {
+		t.Fatal("bundle link was truncated away")
 	}
 }

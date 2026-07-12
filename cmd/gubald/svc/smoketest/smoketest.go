@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -34,14 +35,16 @@ type Server struct {
 	gubalv1.UnimplementedSmokeTestServiceServer
 
 	gh          prCommenter
+	uploader    bundleUploader
 	allowed     map[string]struct{}
 	jobDeadline time.Duration
 }
 
-// New builds a Server. gh posts async results to GitHub; allowedRepos is the
-// "owner/repo" allowlist SubmitSmokeTest enforces (matched case-insensitively);
-// jobDeadline bounds a background sweep.
-func New(gh prCommenter, allowedRepos []string, jobDeadline time.Duration) *Server {
+// New builds a Server. gh posts async results to GitHub; up uploads report
+// bundles (a noopUploader disables uploads); allowedRepos is the "owner/repo"
+// allowlist SubmitSmokeTest enforces (matched case-insensitively); jobDeadline
+// bounds a background sweep.
+func New(gh prCommenter, up bundleUploader, allowedRepos []string, jobDeadline time.Duration) *Server {
 	allowed := make(map[string]struct{}, len(allowedRepos))
 	for _, r := range allowedRepos {
 		r = strings.TrimSpace(r)
@@ -49,7 +52,7 @@ func New(gh prCommenter, allowedRepos []string, jobDeadline time.Duration) *Serv
 			allowed[strings.ToLower(r)] = struct{}{}
 		}
 	}
-	return &Server{gh: gh, allowed: allowed, jobDeadline: jobDeadline}
+	return &Server{gh: gh, uploader: up, allowed: allowed, jobDeadline: jobDeadline}
 }
 
 func (s *Server) SmokeTest(ctx context.Context, req *gubalv1.SmokeTestRequest) (*gubalv1.SmokeTestResult, error) {
@@ -70,34 +73,47 @@ func (s *Server) SmokeTest(ctx context.Context, req *gubalv1.SmokeTestRequest) (
 	return s.runSweep(ctx, req)
 }
 
-// runSweep runs the browser sweep for req and maps it to a SmokeTestResult. It
-// assumes the caller already validated req and holds the sweep semaphore.
-func (s *Server) runSweep(ctx context.Context, req *gubalv1.SmokeTestRequest) (*gubalv1.SmokeTestResult, error) {
+// executeSweep runs the browser sweep and returns the raw Report plus the frames
+// dir; the caller owns removing the dir. Assumes req is validated and the sweep
+// semaphore is held.
+func (s *Server) executeSweep(ctx context.Context, req *gubalv1.SmokeTestRequest) (chromesweep.Report, string, error) {
 	browsers, err := browsersFor(req)
 	if err != nil {
-		return nil, twirp.NewError(twirp.InvalidArgument, err.Error())
+		return chromesweep.Report{}, "", twirp.NewError(twirp.InvalidArgument, err.Error())
 	}
-
 	cs, err := loadClientset()
 	if err != nil {
-		return nil, twirp.InternalErrorWith(fmt.Errorf("building kube client: %w", err))
+		return chromesweep.Report{}, "", twirp.InternalErrorWith(fmt.Errorf("building kube client: %w", err))
 	}
-
 	cfg := chromesweep.DefaultConfig()
 	cfg.AnubisImage = req.GetAnubisImage()
 	cfg.Browsers = browsers
 
 	framesDir, err := os.MkdirTemp("", "smoketest-frames-")
 	if err != nil {
-		return nil, twirp.InternalErrorWith(err)
+		return chromesweep.Report{}, "", twirp.InternalErrorWith(err)
 	}
-	defer os.RemoveAll(framesDir)
-
 	rep, err := chromesweep.Run(ctx, chromesweep.NewCluster(cs, cfg.Namespace), cfg, framesDir)
 	if err != nil {
-		return nil, twirp.InternalErrorWith(err)
+		os.RemoveAll(framesDir)
+		return chromesweep.Report{}, "", twirp.InternalErrorWith(err)
 	}
+	return rep, framesDir, nil
+}
 
+// runSweep runs the browser sweep for req and maps it to a SmokeTestResult. It
+// assumes the caller already validated req and holds the sweep semaphore.
+func (s *Server) runSweep(ctx context.Context, req *gubalv1.SmokeTestRequest) (*gubalv1.SmokeTestResult, error) {
+	rep, framesDir, err := s.executeSweep(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(framesDir)
+	return reportToResult(rep), nil
+}
+
+// reportToResult maps a chromesweep.Report to the proto SmokeTestResult shape.
+func reportToResult(rep chromesweep.Report) *gubalv1.SmokeTestResult {
 	result := &gubalv1.SmokeTestResult{
 		Success: rep.AllPassed(),
 		Report:  chromesweep.RenderMarkdown(rep),
@@ -114,7 +130,33 @@ func (s *Server) runSweep(ctx context.Context, req *gubalv1.SmokeTestRequest) (*
 			Policy:         r.Policy,
 		})
 	}
-	return result, nil
+	return result
+}
+
+// uploadBundle builds the report bundle and uploads it, returning its public URL
+// or "" (best-effort; failures are logged, never fatal).
+func (s *Server) uploadBundle(ctx context.Context, rep chromesweep.Report, framesDir, md string, pr int, id string) string {
+	js, err := chromesweep.RenderJSON(rep)
+	if err != nil {
+		slog.ErrorContext(ctx, "rendering bundle json failed", "err", err)
+		return ""
+	}
+	path := filepath.Join(framesDir, "report.zip")
+	if err := chromesweep.WriteBundle(path, js, []byte(md), rep.Results); err != nil {
+		slog.ErrorContext(ctx, "writing bundle failed", "err", err)
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		slog.ErrorContext(ctx, "reading bundle failed", "err", err)
+		return ""
+	}
+	url, err := s.uploader.Upload(ctx, bundleKey(pr, id), data, "application/zip")
+	if err != nil {
+		slog.ErrorContext(ctx, "uploading bundle failed", "pr", pr, "err", err)
+		return ""
+	}
+	return url
 }
 
 // SubmitSmokeTest accepts a sweep, returns immediately, and runs it in the
@@ -160,20 +202,26 @@ func (s *Server) SubmitSmokeTest(ctx context.Context, req *gubalv1.SubmitSmokeTe
 			slog.WarnContext(bg, "posting ack comment failed", "repo", repo, "pr", pr, "err", err)
 		}
 
-		result, err := s.runSweep(bg, test)
+		rep, framesDir, err := s.executeSweep(bg, test)
+
+		// Post the closure comment (and do the bundle upload) on a fresh
+		// context: bg may already be expired if the sweep ran to jobDeadline,
+		// and the PR must still get a result.
+		pubCtx, pubCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer pubCancel()
+
 		var body string
 		if err != nil {
 			slog.ErrorContext(bg, "background sweep failed", "repo", repo, "pr", pr, "err", err)
 			body = bodyRunError(sha, err)
 		} else {
-			body = bodyResult(result.GetSuccess(), result.GetReport(), sha)
+			defer os.RemoveAll(framesDir)
+			md := chromesweep.RenderMarkdown(rep)
+			bundleURL := s.uploadBundle(pubCtx, rep, framesDir, md, pr, test.GetId())
+			body = bodyResult(rep.AllPassed(), md, sha, bundleURL)
 		}
-		// Post the closure comment on a fresh context: bg may already be expired
-		// if the sweep ran to jobDeadline, and the PR must still get a result.
-		postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer postCancel()
-		if err := s.gh.Comment(postCtx, repo, pr, body); err != nil {
-			slog.ErrorContext(postCtx, "posting result comment failed", "repo", repo, "pr", pr, "err", err)
+		if err := s.gh.Comment(pubCtx, repo, pr, body); err != nil {
+			slog.ErrorContext(pubCtx, "posting result comment failed", "repo", repo, "pr", pr, "err", err)
 		}
 	}()
 

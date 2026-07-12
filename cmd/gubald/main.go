@@ -28,6 +28,7 @@ var (
 	bind                 = flag.String("bind", ":9080", "HTTP bind address")
 	githubToken          = flag.String("github-token", "", "GitHub token gubald posts PR comments with")
 	githubRepos          = flag.String("github-repos", "TecharoHQ/anubis", "comma-separated owner/repo allowlist for async submits")
+	gubalBucket          = flag.String("gubal-bucket", "techaro-gubal", "Tigris bucket for report bundles; empty disables uploads (env GUBAL_BUCKET)")
 	jobDeadline          = flag.Duration("job-deadline", 60*time.Minute, "max wall-clock for a background smoke-test sweep")
 	maxBodySize          = flag.Int64("max-body-size", 1<<20, "max request body bytes hashed for SigV4A verification")
 	metricsBind          = flag.String("metrics-bind", ":9081", "Prometheus bind address")
@@ -104,7 +105,15 @@ func run(ctx context.Context) error {
 			allowed = append(allowed, r)
 		}
 	}
-	smokeTest := smoketest.New(commenter, allowed, *jobDeadline)
+
+	uploader, err := smoketest.NewTigrisUploader(ctx, *gubalBucket)
+	if err != nil {
+		return fmt.Errorf("building tigris uploader: %w", err)
+	}
+	if *gubalBucket == "" {
+		lg.Warn("no -gubal-bucket configured; report bundles will not be uploaded")
+	}
+	smokeTest := smoketest.New(commenter, uploader, allowed, *jobDeadline)
 	var smokeTestH http.Handler = gubalv1.NewSmokeTestServiceServer(smokeTest, twirp.WithServerInterceptors(twirpslog.Interceptor(lg)))
 	smokeTestH = verifier.Middleware(smokeTestH)
 	mux.Handle(gubalv1.SmokeTestServicePathPrefix, smokeTestH)
