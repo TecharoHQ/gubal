@@ -142,7 +142,11 @@ Add flags, all already exported by the CI job:
 
 - `-github-repo` (env `GITHUB_REPO`)
 - `-pr-number` (env `PR_NUMBER`)
-- `-commit-sha` (env `GITHUB_SHA`)
+- `-github-sha` (env `GITHUB_SHA`, the commit SHA under test)
+
+Note: flagenv derives each env var mechanically from the flag name, so the SHA
+flag must be `-github-sha` (→ `GITHUB_SHA`); a `-commit-sha` flag would read
+`COMMIT_SHA` and silently miss CI's `GITHUB_SHA`.
 
 Dispatch: if **both** `-github-repo` and `-pr-number` are set, call
 `SubmitSmokeTest`, print the returned job id, and exit immediately. Otherwise
