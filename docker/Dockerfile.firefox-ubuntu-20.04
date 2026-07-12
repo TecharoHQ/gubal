@@ -18,14 +18,15 @@ FROM ubuntu:20.04
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Firefox's shared-library + font dependency closure. libgtk-3-0 pulls the bulk of the
-# X/xcb/pango/cairo/gdk stack transitively; the rest are Firefox's direct extras. socat
+# X/xcb/pango/cairo/gdk stack transitively; the rest are Firefox's direct extras
+# (libxtst6 = libXtst.so.6, a hard dep of Firefox <= 128; 129+ dropped it). socat
 # is the CDP bridge (see firefox-entrypoint.sh). Package names are the pre-t64 spellings
 # used on Ubuntu <= 23.10.
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       ca-certificates curl socat bzip2 xz-utils \
-      libgtk-3-0 libdbus-glib-1-2 libxt6 libasound2 libpci3 libx11-xcb1 \
+      libgtk-3-0 libdbus-glib-1-2 libxt6 libxtst6 libasound2 libpci3 libx11-xcb1 \
       fonts-liberation fonts-noto-cjk fonts-noto-color-emoji; \
     rm -rf /var/lib/apt/lists/*
 
