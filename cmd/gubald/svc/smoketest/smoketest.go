@@ -84,6 +84,7 @@ func (s *Server) SmokeTest(ctx context.Context, req *gubalv1.SmokeTestRequest) (
 			BrowserVersion: r.BrowserVersion,
 			ReportedUa:     r.ReportedUA,
 			Detail:         r.Detail,
+			Policy:         r.Policy,
 		})
 	}
 

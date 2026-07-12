@@ -217,6 +217,7 @@ type ChromeVersionResult struct {
 	ReportedUa     string                 `protobuf:"bytes,4,opt,name=reported_ua,json=reportedUa,proto3" json:"reported_ua,omitempty"`
 	Detail         string                 `protobuf:"bytes,5,opt,name=detail,proto3" json:"detail,omitempty"`
 	Browser        string                 `protobuf:"bytes,6,opt,name=browser,proto3" json:"browser,omitempty"` // "chrome" / "firefox"
+	Policy         string                 `protobuf:"bytes,7,opt,name=policy,proto3" json:"policy,omitempty"`   // Anubis ruleset this result was tested against ("" if none)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -293,6 +294,13 @@ func (x *ChromeVersionResult) GetBrowser() string {
 	return ""
 }
 
+func (x *ChromeVersionResult) GetPolicy() string {
+	if x != nil {
+		return x.Policy
+	}
+	return ""
+}
+
 var File_techaro_lol_gubal_v1_gubal_proto protoreflect.FileDescriptor
 
 const file_techaro_lol_gubal_v1_gubal_proto_rawDesc = "" +
@@ -306,7 +314,7 @@ const file_techaro_lol_gubal_v1_gubal_proto_rawDesc = "" +
 	"\x0fSmokeTestResult\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x16\n" +
 	"\x06report\x18\x02 \x01(\tR\x06report\x12C\n" +
-	"\aresults\x18\x03 \x03(\v2).techaro.lol.gubal.v1.ChromeVersionResultR\aresults\"\xde\x01\n" +
+	"\aresults\x18\x03 \x03(\v2).techaro.lol.gubal.v1.ChromeVersionResultR\aresults\"\xf6\x01\n" +
 	"\x13ChromeVersionResult\x12\x10\n" +
 	"\x03tag\x18\x01 \x01(\tR\x03tag\x129\n" +
 	"\x06status\x18\x02 \x01(\x0e2!.techaro.lol.gubal.v1.SweepStatusR\x06status\x12'\n" +
@@ -314,7 +322,8 @@ const file_techaro_lol_gubal_v1_gubal_proto_rawDesc = "" +
 	"\vreported_ua\x18\x04 \x01(\tR\n" +
 	"reportedUa\x12\x16\n" +
 	"\x06detail\x18\x05 \x01(\tR\x06detail\x12\x18\n" +
-	"\abrowser\x18\x06 \x01(\tR\abrowser*\x8d\x01\n" +
+	"\abrowser\x18\x06 \x01(\tR\abrowser\x12\x16\n" +
+	"\x06policy\x18\a \x01(\tR\x06policy*\x8d\x01\n" +
 	"\vSweepStatus\x12\x1c\n" +
 	"\x18SWEEP_STATUS_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11SWEEP_STATUS_PASS\x10\x01\x12\x15\n" +
