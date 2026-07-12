@@ -15,6 +15,12 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
+// sweepSem is a global semaphore that serializes smoke-test sweeps: a sweep
+// mutates shared per-version cluster resources (chrome-<tag> Deployment,
+// Service, NetworkPolicy and the chrome-smoke-<tag> Job), so two running at
+// once would collide. Buffered to 1 so only a single sweep runs at a time.
+var sweepSem = make(chan struct{}, 1)
+
 type Server struct {
 	gubalv1.UnimplementedSmokeTestServiceServer
 }
@@ -28,6 +34,16 @@ func New() *Server {
 func (s *Server) SmokeTest(ctx context.Context, req *gubalv1.SmokeTestRequest) (*gubalv1.SmokeTestResult, error) {
 	if err := protovalidate.Validate(req); err != nil {
 		return nil, twirp.NewError(twirp.InvalidArgument, err.Error())
+	}
+
+	// Serialize sweeps: only one may touch the shared cluster resources at a
+	// time. Block until the running sweep (if any) finishes or the caller
+	// gives up.
+	select {
+	case sweepSem <- struct{}{}:
+		defer func() { <-sweepSem }()
+	case <-ctx.Done():
+		return nil, twirp.NewError(twirp.Canceled, ctx.Err().Error())
 	}
 
 	raw := make([]string, len(req.GetChromeVersions()))
