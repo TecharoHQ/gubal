@@ -15,8 +15,8 @@ message SmokeTestRequest {
   ];
   string anubis_image = 2 [(buf.validate.field).required = true];
   repeated int32 chrome_versions = 3 [
-    (buf.validate.field).required = true,
-    (buf.validate.field).int32.gt = 70
+    (buf.validate.field).repeated.min_items = 1,
+    (buf.validate.field).repeated.items.int32.gt = 70
   ];
 }
 
