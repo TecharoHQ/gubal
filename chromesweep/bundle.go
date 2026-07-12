@@ -7,9 +7,10 @@ import (
 	"path/filepath"
 )
 
-// WriteBundle writes a zip archive to path containing report.json, report.md, and
-// every result's captured frame under frames/. Results without a captured frame
-// are skipped.
+// WriteBundle writes a zip archive to path containing report.json, report.md,
+// every result's captured frame under frames/, and every result's captured
+// container logs under logs/. Results without a captured frame (or logs) skip
+// those entries.
 func WriteBundle(path string, reportJSON, reportMarkdown []byte, results []Result) (err error) {
 	f, err := os.Create(path)
 	if err != nil {
@@ -29,15 +30,23 @@ func WriteBundle(path string, reportJSON, reportMarkdown []byte, results []Resul
 		return err
 	}
 	for _, r := range results {
-		if r.FramePath == "" {
-			continue
+		if r.FramePath != "" {
+			data, rerr := os.ReadFile(r.FramePath)
+			if rerr != nil {
+				return fmt.Errorf("reading frame %s: %w", r.FramePath, rerr)
+			}
+			if err := addZipFile(zw, "frames/"+filepath.Base(r.FramePath), data); err != nil {
+				return err
+			}
 		}
-		data, rerr := os.ReadFile(r.FramePath)
-		if rerr != nil {
-			return fmt.Errorf("reading frame %s: %w", r.FramePath, rerr)
-		}
-		if err := addZipFile(zw, "frames/"+filepath.Base(r.FramePath), data); err != nil {
-			return err
+		for _, lg := range r.Logs {
+			if lg.Content == "" {
+				continue
+			}
+			name := fmt.Sprintf("logs/%s-%s-%s.log", r.Browser, r.Tag, lg.Container)
+			if err := addZipFile(zw, name, []byte(lg.Content)); err != nil {
+				return err
+			}
 		}
 	}
 	return zw.Close()

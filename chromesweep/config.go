@@ -11,11 +11,11 @@ import "time"
 // Browser describes one browser target to sweep: its image repo, the base names
 // for its per-version resources, the manifests to template, and the versions.
 type Browser struct {
-	Name                  string   // "chrome" / "firefox": report section, frame prefix, resource base
-	ImageRepo             string   // final image ref is <ImageRepo>:<tag>
-	Deployment            string   // base name -> <name>-<tag> resources; also the CDP host in the Job
-	Container             string   // container within the Deployment to re-image
-	JobName               string   // base name for per-version smoke Jobs
+	Name                  string // "chrome" / "firefox": report section, frame prefix, resource base
+	ImageRepo             string // final image ref is <ImageRepo>:<tag>
+	Deployment            string // base name -> <name>-<tag> resources; also the CDP host in the Job
+	Container             string // container within the Deployment to re-image
+	JobName               string // base name for per-version smoke Jobs
 	DeploymentManifest    string
 	ServiceManifest       string
 	NetworkPolicyManifest string

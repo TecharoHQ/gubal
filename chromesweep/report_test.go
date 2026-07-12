@@ -31,6 +31,38 @@ func TestRenderMarkdown(t *testing.T) {
 	}
 }
 
+func TestRenderMarkdownEmbedsFailureLogs(t *testing.T) {
+	md := RenderMarkdown(Report{
+		Results: []Result{
+			{Browser: "firefox", Tag: "152", Status: StatusFail, Detail: "smoke job failed", Logs: []LogCapture{
+				{Container: "firefox", Content: "bidi client closed <-32000>"},
+				{Container: "chrome-bully", Content: "fatal: loading url"},
+			}},
+			{Browser: "firefox", Tag: "140", Status: StatusPass, Logs: []LogCapture{
+				{Container: "firefox", Content: "should-not-appear-passed"},
+			}},
+		},
+	})
+	for _, want := range []string{
+		"<details><summary>Firefox 152 (fail) — logs</summary>",
+		"<b>firefox</b>",
+		"<b>chrome-bully</b>",
+		"bidi client closed &lt;-32000&gt;", // HTML-escaped
+		"</details>",
+	} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, md)
+		}
+	}
+	// A passing run's logs must NOT be embedded.
+	if strings.Contains(md, "should-not-appear-passed") {
+		t.Fatalf("passing run logs must not be embedded:\n%s", md)
+	}
+	if strings.Contains(md, "Firefox 140 (pass)") {
+		t.Fatalf("no details block for a passing run:\n%s", md)
+	}
+}
+
 func TestRenderMarkdownOmitsAnubisWhenEmpty(t *testing.T) {
 	md := RenderMarkdown(Report{Results: []Result{{Browser: "chrome", Tag: "150", Status: StatusPass}}})
 	if strings.Contains(md, "Anubis image:") {

@@ -242,14 +242,27 @@ func (c *Cluster) WaitJob(ctx context.Context, name string, timeout time.Duratio
 // JobContainerLogs returns the logs of the named container in the newest pod
 // belonging to the Job.
 func (c *Cluster) JobContainerLogs(ctx context.Context, jobName, container string) (string, error) {
+	return c.podLogsBySelector(ctx, "job-name="+jobName, container)
+}
+
+// DeploymentPodLogs returns the logs of container in the newest pod labelled
+// app=<name> — i.e. a per-version browser Deployment's pod (foxbridge/Firefox or
+// Chrome). Used to bundle browser-side diagnostics alongside the client logs.
+func (c *Cluster) DeploymentPodLogs(ctx context.Context, name, container string) (string, error) {
+	return c.podLogsBySelector(ctx, "app="+name, container)
+}
+
+// podLogsBySelector streams the logs of container from the newest pod matching
+// selector.
+func (c *Cluster) podLogsBySelector(ctx context.Context, selector, container string) (string, error) {
 	pods, err := c.cs.CoreV1().Pods(c.ns).List(ctx, metav1.ListOptions{
-		LabelSelector: "job-name=" + jobName,
+		LabelSelector: selector,
 	})
 	if err != nil {
 		return "", err
 	}
 	if len(pods.Items) == 0 {
-		return "", fmt.Errorf("no pods for job %s", jobName)
+		return "", fmt.Errorf("no pods for selector %s", selector)
 	}
 	newest := pods.Items[0]
 	for _, p := range pods.Items[1:] {

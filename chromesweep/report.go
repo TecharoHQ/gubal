@@ -3,6 +3,7 @@ package chromesweep
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"strings"
 )
 
@@ -24,6 +25,16 @@ type Result struct {
 	ReportedUA     string `json:"reported_ua,omitempty"`
 	FramePath      string `json:"frame_path,omitempty"`
 	Detail         string `json:"detail,omitempty"`
+	// Logs holds the captured container logs (browser + client) for this version.
+	// Carried in memory only (not serialized to report.json): WriteBundle persists
+	// them under logs/ and RenderMarkdown embeds them for failed runs.
+	Logs []LogCapture `json:"-"`
+}
+
+// LogCapture is one container's captured logs for a swept version.
+type LogCapture struct {
+	Container string
+	Content   string
 }
 
 // Report is the full outcome of a sweep run: the per-version results plus the
@@ -75,8 +86,27 @@ func RenderMarkdown(rep Report) string {
 				r.Tag, r.Status, dash(r.BrowserVersion), dash(r.FramePath), dash(r.Detail))
 		}
 		b.WriteString("\n")
+		// Attach captured logs for any non-passing run so a failure is diagnosable
+		// straight from the report (the full logs also live in the bundle).
+		for _, r := range rs {
+			if r.Status == StatusPass || len(r.Logs) == 0 {
+				continue
+			}
+			writeFailureLogs(&b, r)
+		}
 	}
 	return b.String()
+}
+
+// writeFailureLogs renders a result's captured container logs inside a collapsed
+// <details> block, one <pre> per container, HTML-escaped so log content can't
+// break the surrounding markup.
+func writeFailureLogs(b *strings.Builder, r Result) {
+	fmt.Fprintf(b, "<details><summary>%s %s (%s) — logs</summary>\n\n", titleCase(r.Browser), r.Tag, r.Status)
+	for _, lg := range r.Logs {
+		fmt.Fprintf(b, "<b>%s</b>\n<pre>%s</pre>\n\n", html.EscapeString(lg.Container), html.EscapeString(lg.Content))
+	}
+	b.WriteString("</details>\n\n")
 }
 
 // titleCase upper-cases the first byte of s ("chrome" -> "Chrome").

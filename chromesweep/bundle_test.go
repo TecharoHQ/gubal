@@ -65,3 +65,70 @@ func TestWriteBundle(t *testing.T) {
 		t.Fatalf("expected 4 entries (report.json + report.md + 2 frames), got %d", len(got))
 	}
 }
+
+func TestWriteBundleIncludesLogs(t *testing.T) {
+	dir := t.TempDir()
+	frame := filepath.Join(dir, "firefox-152.png")
+	if err := os.WriteFile(frame, []byte("PNG"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	results := []Result{
+		{
+			Browser:   "firefox",
+			Tag:       "152",
+			Status:    StatusFail,
+			FramePath: frame,
+			Logs: []LogCapture{
+				{Container: "firefox", Content: "bidi client closed"},
+				{Container: "chrome-bully", Content: "fatal: loading url"},
+				{Container: "smoke", Content: ""}, // empty — must be skipped
+			},
+		},
+		{Browser: "chrome", Tag: "150", Status: StatusPass}, // no logs, no frame
+	}
+	zipPath := filepath.Join(dir, "report.zip")
+	if err := WriteBundle(zipPath, []byte("{}"), []byte("# report\n"), results); err != nil {
+		t.Fatal(err)
+	}
+
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	got := map[string][]byte{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var buf bytes.Buffer
+		if _, err := buf.ReadFrom(rc); err != nil {
+			t.Fatal(err)
+		}
+		rc.Close()
+		got[f.Name] = buf.Bytes()
+	}
+
+	if !bytes.Equal(got["logs/firefox-152-firefox.log"], []byte("bidi client closed")) {
+		t.Fatalf("firefox log = %q", got["logs/firefox-152-firefox.log"])
+	}
+	if !bytes.Equal(got["logs/firefox-152-chrome-bully.log"], []byte("fatal: loading url")) {
+		t.Fatalf("chrome-bully log = %q", got["logs/firefox-152-chrome-bully.log"])
+	}
+	if _, ok := got["logs/firefox-152-smoke.log"]; ok {
+		t.Fatal("empty log content must be skipped")
+	}
+	// report.json + report.md + 1 frame + 2 logs = 5.
+	if len(got) != 5 {
+		t.Fatalf("expected 5 entries, got %d: %v", len(got), keys(got))
+	}
+}
+
+func keys(m map[string][]byte) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}

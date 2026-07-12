@@ -138,7 +138,7 @@ func prepareAnubis(ctx context.Context, c *Cluster, cfg Config) (image string, r
 
 func sweepOne(ctx context.Context, c *Cluster, cfg Config, b Browser, base baseManifests, tag, framesDir string) Result {
 	name := versionedName(b.Deployment, tag) // e.g. chrome-150 / firefox-152
-	jobName := versionedName(b.JobName, tag)  // e.g. chrome-smoke-150
+	jobName := versionedName(b.JobName, tag) // e.g. chrome-smoke-150
 	image := fmt.Sprintf("%s:%s", b.ImageRepo, tag)
 	res := Result{Browser: b.Name, Tag: tag}
 	log := slog.With("browser", b.Name, "tag", tag, "image", image, "name", name)
@@ -187,12 +187,14 @@ func sweepOne(ctx context.Context, c *Cluster, cfg Config, b Browser, base baseM
 		return res
 	}
 
-	if smokeLogs, lerr := c.JobContainerLogs(ctx, jobName, "smoke"); lerr == nil {
+	smokeLogs, smokeErr := c.JobContainerLogs(ctx, jobName, "smoke")
+	if smokeErr == nil {
 		res.ReportedUA = reportedUA(smokeLogs)
 	} else {
-		log.Warn("reading smoke logs failed", "err", lerr)
+		log.Warn("reading smoke logs failed", "err", smokeErr)
 	}
-	if bullyLogs, lerr := c.JobContainerLogs(ctx, jobName, "chrome-bully"); lerr == nil {
+	bullyLogs, bullyErr := c.JobContainerLogs(ctx, jobName, "chrome-bully")
+	if bullyErr == nil {
 		if remote, perr := capturedFramePath(bullyLogs); perr == nil {
 			res.BrowserVersion = versionFromFrame(remote)
 			local := filepath.Join(framesDir, localFrameName(b.Name, tag))
@@ -203,7 +205,23 @@ func sweepOne(ctx context.Context, c *Cluster, cfg Config, b Browser, base baseM
 			}
 		}
 	} else {
-		log.Warn("reading chrome-bully logs failed", "err", lerr)
+		log.Warn("reading chrome-bully logs failed", "err", bullyErr)
+	}
+	// Browser-side (foxbridge/Firefox or Chrome) logs — fetched before the deferred
+	// teardown deletes the Deployment. Best-effort; a missing log is warned, not fatal.
+	browserLogs, browserErr := c.DeploymentPodLogs(ctx, name, b.Container)
+	if browserErr != nil {
+		log.Warn("reading browser logs failed", "err", browserErr)
+	}
+	// Bundle the captured logs, browser-side first. Empty captures are dropped.
+	for _, lc := range []LogCapture{
+		{Container: b.Container, Content: browserLogs},
+		{Container: "chrome-bully", Content: bullyLogs},
+		{Container: "smoke", Content: smokeLogs},
+	} {
+		if lc.Content != "" {
+			res.Logs = append(res.Logs, lc)
+		}
 	}
 
 	if ok {
