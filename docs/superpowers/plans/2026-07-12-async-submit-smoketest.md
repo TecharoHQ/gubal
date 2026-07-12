@@ -170,7 +170,9 @@ git commit -m "feat(pb): add async SubmitSmokeTest RPC and GitHub target"
 - Test: `cmd/gubald/svc/smoketest/github_test.go`
 
 **Interfaces:**
-- Produces: `func newGitHubCommenter(token string) *githubCommenter` and method `func (g *githubCommenter) Comment(ctx context.Context, repo string, pr int, body string) error`. The `Comment` signature must exactly match the `prCommenter` interface defined in Task 4. Also produces helper `func splitRepo(repo string) (owner, name string, err error)`.
+- Produces: `func newGitHubCommenter(token string) (*githubCommenter, error)` and method `func (g *githubCommenter) Comment(ctx context.Context, repo string, pr int, body string) error`. The `Comment` signature must exactly match the `prCommenter` interface defined in Task 4. Also produces helper `func splitRepo(repo string) (owner, name string, err error)`.
+
+> **API note (go-github v89):** `github.NewClient` takes functional options and returns `(*Client, error)` — `func NewClient(opts ...ClientOptionsFunc) (*Client, error)`. `WithAuthToken(token string) ClientOptionsFunc` is a package-level option, **not** a method. Construct with `github.NewClient(github.WithAuthToken(token))`. Because that returns an error, `newGitHubCommenter` returns `(*githubCommenter, error)`.
 
 - [ ] **Step 1: Add the go-github v89 dependency**
 
@@ -237,8 +239,12 @@ type githubCommenter struct {
 }
 
 // newGitHubCommenter builds a commenter authenticated with the given token.
-func newGitHubCommenter(token string) *githubCommenter {
-	return &githubCommenter{client: github.NewClient(nil).WithAuthToken(token)}
+func newGitHubCommenter(token string) (*githubCommenter, error) {
+	client, err := github.NewClient(github.WithAuthToken(token))
+	if err != nil {
+		return nil, fmt.Errorf("building github client: %w", err)
+	}
+	return &githubCommenter{client: client}, nil
 }
 
 // Comment posts body to PR pr in "owner/repo" repo.
@@ -554,7 +560,10 @@ Add `"strings"` and `"time"` to the imports.
 Replace the `smokeTest := smoketest.New()` line with:
 
 ```go
-	commenter := smoketest.NewGitHubCommenter(*githubToken)
+	commenter, err := smoketest.NewGitHubCommenter(*githubToken)
+	if err != nil {
+		return fmt.Errorf("building github commenter: %w", err)
+	}
 	var allowed []string
 	for _, r := range strings.Split(*githubRepos, ",") {
 		if r = strings.TrimSpace(r); r != "" {
@@ -564,9 +573,11 @@ Replace the `smokeTest := smoketest.New()` line with:
 	smokeTest := smoketest.New(commenter, allowed, *jobDeadline)
 ```
 
+Note: `run` already has an `err` in scope from the `sigv4aclient.NewSigV4ARoundTripper` call above, so use `=` if reusing it or keep `:=` if the linter prefers — adjust to compile. `fmt` is already imported in `main.go`.
+
 - [ ] **Step 3: Export the commenter constructor**
 
-`main.go` is a different package, so the constructor must be exported. In `cmd/gubald/svc/smoketest/github.go`, rename `newGitHubCommenter` to `NewGitHubCommenter` (exported) and update its one usage. Update the doc comment's leading word to match. (The `github_test.go` from Task 2 did not call it, so no test change is needed.)
+`main.go` is a different package, so the constructor must be exported. In `cmd/gubald/svc/smoketest/github.go`, rename `newGitHubCommenter` to `NewGitHubCommenter` (exported, still returning `(*githubCommenter, error)`) and update the doc comment's leading word to match. Returning an unexported `*githubCommenter` from an exported function is fine — `main.go` holds it via `:=` and passes it to `New` (which takes the `prCommenter` interface). (The `github_test.go` from Task 2 did not call it, so no test change is needed.)
 
 - [ ] **Step 4: Build and run existing tests**
 
