@@ -61,10 +61,17 @@ spec:
     rules:
       - apiGroups: ["apps"]
         resources: ["deployments"]
-        verbs: ["get", "create", "delete", "patch"]
+        # update: RestorePodTemplate reverts Anubis's pod template via a full
+        # Update after a sweep (patch alone can't drop added env/volumes).
+        verbs: ["get", "create", "delete", "patch", "update"]
       - apiGroups: [""]
         resources: ["services"]
         verbs: ["get", "create", "delete"]
+      # Per-policy ConfigMaps hold the Anubis ruleset a sweep mounts into the
+      # Anubis pod (CreateOrReplaceConfigMap: get, then create or update).
+      - apiGroups: [""]
+        resources: ["configmaps"]
+        verbs: ["get", "create", "update"]
       - apiGroups: ["networking.k8s.io"]
         resources: ["networkpolicies"]
         verbs: ["get", "create", "delete"]
