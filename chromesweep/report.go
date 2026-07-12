@@ -18,6 +18,9 @@ const (
 
 // Result is the outcome of testing one browser image tag.
 type Result struct {
+	// Policy is the Anubis ruleset this version was tested against (the policy
+	// filename without extension). Empty when the sweep used Anubis's live policy.
+	Policy         string `json:"policy,omitempty"`
 	Browser        string `json:"browser,omitempty"`
 	Tag            string `json:"tag"`
 	Status         Status `json:"status"`
@@ -55,16 +58,81 @@ func (r Report) AllPassed() bool {
 	return true
 }
 
-// RenderMarkdown produces a human-readable summary: one section per browser (in
-// first-seen order), each with its own pass count and results table.
+// PolicyStat is the pass tally for one Anubis policy across all browsers/versions.
+type PolicyStat struct {
+	Name   string
+	Passed int
+	Total  int
+}
+
+// Status is pass when every version under the policy passed, else fail.
+func (p PolicyStat) Status() Status {
+	if p.Total > 0 && p.Passed == p.Total {
+		return StatusPass
+	}
+	return StatusFail
+}
+
+// PolicyStats tallies pass/total per policy in first-seen order.
+func PolicyStats(results []Result) []PolicyStat {
+	idx := map[string]int{}
+	var stats []PolicyStat
+	for _, r := range results {
+		i, ok := idx[r.Policy]
+		if !ok {
+			i = len(stats)
+			idx[r.Policy] = i
+			stats = append(stats, PolicyStat{Name: r.Policy})
+		}
+		stats[i].Total++
+		if r.Status == StatusPass {
+			stats[i].Passed++
+		}
+	}
+	return stats
+}
+
+// RenderMarkdown produces a human-readable summary: an Anubis-policy pass/fail
+// table, then one section per policy (first-seen order), each grouping its
+// browsers and their per-version results.
 func RenderMarkdown(rep Report) string {
 	var b strings.Builder
 	if rep.AnubisImage != "" {
 		fmt.Fprintf(&b, "Anubis image: `%s`\n\n", rep.AnubisImage)
 	}
+	if stats := PolicyStats(rep.Results); len(stats) > 0 {
+		b.WriteString("## Anubis policy results\n\n")
+		b.WriteString("| policy | status | versions passed |\n")
+		b.WriteString("|--------|--------|-----------------|\n")
+		for _, s := range stats {
+			fmt.Fprintf(&b, "| %s | %s | %d/%d |\n", dash(s.Name), s.Status(), s.Passed, s.Total)
+		}
+		b.WriteString("\n")
+	}
+	var order []string
+	byPolicy := map[string][]Result{}
+	for _, r := range rep.Results {
+		if _, ok := byPolicy[r.Policy]; !ok {
+			order = append(order, r.Policy)
+		}
+		byPolicy[r.Policy] = append(byPolicy[r.Policy], r)
+	}
+	for _, pol := range order {
+		if pol != "" {
+			fmt.Fprintf(&b, "# Policy: %s\n\n", pol)
+		}
+		renderBrowserGroups(&b, byPolicy[pol])
+	}
+	return b.String()
+}
+
+// renderBrowserGroups renders one browser section per browser (first-seen order)
+// for results already scoped to a single policy: a header with the pass count, a
+// results table, then collapsed failure-log blocks for any non-passing run.
+func renderBrowserGroups(b *strings.Builder, results []Result) {
 	var order []string
 	groups := map[string][]Result{}
-	for _, r := range rep.Results {
+	for _, r := range results {
 		if _, ok := groups[r.Browser]; !ok {
 			order = append(order, r.Browser)
 		}
@@ -78,24 +146,21 @@ func RenderMarkdown(rep Report) string {
 				passed++
 			}
 		}
-		fmt.Fprintf(&b, "# %s version sweep — %d/%d passed\n\n", titleCase(br), passed, len(rs))
+		fmt.Fprintf(b, "## %s version sweep — %d/%d passed\n\n", titleCase(br), passed, len(rs))
 		b.WriteString("| tag | status | browser version | frame | detail |\n")
 		b.WriteString("|-----|--------|-----------------|-------|--------|\n")
 		for _, r := range rs {
-			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n",
+			fmt.Fprintf(b, "| %s | %s | %s | %s | %s |\n",
 				r.Tag, r.Status, dash(r.BrowserVersion), dash(r.FramePath), dash(r.Detail))
 		}
 		b.WriteString("\n")
-		// Attach captured logs for any non-passing run so a failure is diagnosable
-		// straight from the report (the full logs also live in the bundle).
 		for _, r := range rs {
 			if r.Status == StatusPass || len(r.Logs) == 0 {
 				continue
 			}
-			writeFailureLogs(&b, r)
+			writeFailureLogs(b, r)
 		}
 	}
-	return b.String()
 }
 
 // failureLogTailLines is how many trailing lines of each container log are embedded
