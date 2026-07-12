@@ -1,6 +1,14 @@
-# One-shot proving Job for Firefox: connect to the Firefox CDP Service, print
-# /json/version, assert the reported User-Agent looks like real Firefox, then drive
-# it through Anubis with chrome-bully. Mirror of k8s/smoke-job.yaml.
+# One-shot proving Job for Firefox: connect to the foxbridge CDP Service, print
+# /json/version, assert the bridge is up, then drive Firefox through Anubis with
+# chrome-bully. Mirror of k8s/smoke-job.yaml.
+#
+# The browser here is Firefox fronted by foxbridge, which speaks CDP on :9222.
+# foxbridge advertises a hardcoded loopback webSocketDebuggerUrl
+# (ws://127.0.0.1:19222/devtools/browser/foxbridge — its internal socat-backed
+# port), and chromedp uses an advertised /devtools/browser/ URL verbatim. So we
+# point chrome-bully straight at the browser endpoint by its stable "foxbridge"
+# session id; chromedp then resolves the Service DNS to an IP and connects on
+# :9222 (socat -> foxbridge) instead of dialing its own loopback.
 #
 # Carries role=chrome-controller so the firefox NetworkPolicy lets it reach 9222.
 apiVersion: batch/v1
@@ -23,20 +31,22 @@ spec:
           args:
             - |
               set -eu
-              # DevTools rejects DNS-name Host headers (anti DNS-rebinding), so we
-              # reach the Service by name but send an accepted Host header.
+              # foxbridge serves the CDP /json/version endpoint on :9222.
               echo "waiting for firefox:9222 ..."
               for i in $(seq 1 30); do
-                if curl -fsS -H "Host: localhost:9222" \
-                     "http://firefox:9222/json/version" -o /tmp/v.json; then break; fi
+                if curl -fsS "http://firefox:9222/json/version" -o /tmp/v.json; then break; fi
                 sleep 2
               done
               cat /tmp/v.json; echo
+              # foxbridge reports its own identity here (User-Agent: foxbridge,
+              # Browser: foxbridge/x.y), NOT Firefox's UA. That only proves the CDP
+              # bridge is up; the real non-headless-Firefox proof is chrome-bully
+              # transiting Anubis below.
               ua=$(sed -n 's/.*"User-Agent": *"\([^"]*\)".*/\1/p' /tmp/v.json)
               echo "User-Agent: ${ua}"
               case "${ua}" in
-                *Firefox/*) echo "PASS: driveable Firefox UA" ;;
-                *)          echo "FAIL: unexpected/empty User-Agent"; exit 1 ;;
+                *foxbridge*) echo "PASS: foxbridge CDP bridge is up" ;;
+                *)           echo "FAIL: foxbridge CDP not reachable"; exit 1 ;;
               esac
 
               # Anubis is up and serving its challenge.
@@ -48,14 +58,16 @@ spec:
               grep -qi anubis /tmp/anubis.html \
                 && echo "PASS: Anubis is serving its challenge" \
                 || { echo "FAIL: response is not Anubis"; exit 1; }
-        # Controller: drives Firefox over CDP (Host "localhost" satisfies the
-        # DNS-rebind check) through Anubis, sets a marker header, waits for it to
-        # echo back, then screenshots. Frames land on the shared PVC.
+        # Controller: drives Firefox (via foxbridge) over CDP through Anubis, sets a
+        # marker header, waits for it to echo back, then screenshots. Frames land on
+        # the shared PVC. -cdp-url points at foxbridge's browser endpoint directly
+        # (stable "foxbridge" session id) so chromedp resolves firefox-<tag> to an IP
+        # and connects on :9222 rather than dialing foxbridge's advertised loopback.
         - name: chrome-bully
           image: ghcr.io/techarohq/gubal/chrome-bully:latest
           imagePullPolicy: Always
           args:
-            - -cdp-url=http://firefox:9222
+            - -cdp-url=ws://firefox:9222/devtools/browser/foxbridge
             - -target-url=https://anubis-ci.alrest.cetacean.club
             - "-header=X-Firefox-Bully: firefox-bully-roundtrip-ok"
             - -expect-text=firefox-bully-roundtrip-ok
