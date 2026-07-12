@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/TecharoHQ/gubal/cmd/gubald/svc/smoketest"
 	gubalv1 "github.com/TecharoHQ/gubal/gen/techaro/lol/gubal/v1"
@@ -24,6 +26,9 @@ import (
 
 var (
 	bind                 = flag.String("bind", ":9080", "HTTP bind address")
+	githubToken          = flag.String("github-token", "", "GitHub token gubald posts PR comments with")
+	githubRepos          = flag.String("github-repos", "TecharoHQ/anubis", "comma-separated owner/repo allowlist for async submits")
+	jobDeadline          = flag.Duration("job-deadline", 60*time.Minute, "max wall-clock for a background smoke-test sweep")
 	maxBodySize          = flag.Int64("max-body-size", 1<<20, "max request body bytes hashed for SigV4A verification")
 	metricsBind          = flag.String("metrics-bind", ":9081", "Prometheus bind address")
 	region               = flag.String("region", "yow", "SigV4a region all clients must sign for")
@@ -86,7 +91,17 @@ func run(ctx context.Context) error {
 		fmt.Fprintln(w, "OK")
 	})
 
-	smokeTest := smoketest.New()
+	commenter, err := smoketest.NewGitHubCommenter(*githubToken)
+	if err != nil {
+		return fmt.Errorf("building github commenter: %w", err)
+	}
+	var allowed []string
+	for _, r := range strings.Split(*githubRepos, ",") {
+		if r = strings.TrimSpace(r); r != "" {
+			allowed = append(allowed, r)
+		}
+	}
+	smokeTest := smoketest.New(commenter, allowed, *jobDeadline)
 	var smokeTestH http.Handler = gubalv1.NewSmokeTestServiceServer(smokeTest, twirp.WithServerInterceptors(twirpslog.Interceptor(lg)))
 	smokeTestH = verifier.Middleware(smokeTestH)
 	mux.Handle(gubalv1.SmokeTestServicePathPrefix, smokeTestH)

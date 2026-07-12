@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	"buf.build/go/protovalidate"
 	"github.com/TecharoHQ/gubal/chromesweep"
@@ -21,14 +23,32 @@ import (
 // once would collide. Buffered to 1 so only a single sweep runs at a time.
 var sweepSem = make(chan struct{}, 1)
 
-type Server struct {
-	gubalv1.UnimplementedSmokeTestServiceServer
+// prCommenter posts a comment to a GitHub PR thread. Backed by githubCommenter in
+// production; a fake in tests.
+type prCommenter interface {
+	Comment(ctx context.Context, repo string, pr int, body string) error
 }
 
-func New() *Server {
-	result := &Server{}
+type Server struct {
+	gubalv1.UnimplementedSmokeTestServiceServer
 
-	return result
+	gh          prCommenter
+	allowed     map[string]struct{}
+	jobDeadline time.Duration
+}
+
+// New builds a Server. gh posts async results to GitHub; allowedRepos is the
+// "owner/repo" allowlist SubmitSmokeTest enforces (matched case-insensitively);
+// jobDeadline bounds a background sweep.
+func New(gh prCommenter, allowedRepos []string, jobDeadline time.Duration) *Server {
+	allowed := make(map[string]struct{}, len(allowedRepos))
+	for _, r := range allowedRepos {
+		r = strings.TrimSpace(r)
+		if r != "" {
+			allowed[strings.ToLower(r)] = struct{}{}
+		}
+	}
+	return &Server{gh: gh, allowed: allowed, jobDeadline: jobDeadline}
 }
 
 func (s *Server) SmokeTest(ctx context.Context, req *gubalv1.SmokeTestRequest) (*gubalv1.SmokeTestResult, error) {
@@ -46,6 +66,12 @@ func (s *Server) SmokeTest(ctx context.Context, req *gubalv1.SmokeTestRequest) (
 		return nil, twirp.NewError(twirp.ResourceExhausted, "a smoke test is already running; try again later")
 	}
 
+	return s.runSweep(ctx, req)
+}
+
+// runSweep runs the browser sweep for req and maps it to a SmokeTestResult. It
+// assumes the caller already validated req and holds the sweep semaphore.
+func (s *Server) runSweep(ctx context.Context, req *gubalv1.SmokeTestRequest) (*gubalv1.SmokeTestResult, error) {
 	browsers, err := browsersFor(req)
 	if err != nil {
 		return nil, twirp.NewError(twirp.InvalidArgument, err.Error())
@@ -87,7 +113,6 @@ func (s *Server) SmokeTest(ctx context.Context, req *gubalv1.SmokeTestRequest) (
 			Policy:         r.Policy,
 		})
 	}
-
 	return result, nil
 }
 
