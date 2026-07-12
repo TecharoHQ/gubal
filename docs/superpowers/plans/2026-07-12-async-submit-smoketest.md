@@ -947,8 +947,371 @@ The Anubis `.github/workflows/gubal.yml` "Run gubal test" step becomes a single 
 
 ---
 
+---
+
+## Follow-up: attach the report bundle to the PR comment (Tasks 8–9)
+
+GitHub's API can't attach a binary file to a comment (attachments are a browser-only
+`user-attachments` flow). So gubald uploads the `report.zip` bundle to the Tigris
+bucket `techaro-gubal` as a **public-read** object and links its permanent URL
+(`https://techaro-gubal.t3.storage.dev/<key>`) in the result comment. Upload uses
+`github.com/tigrisdata/storage-go` (v0.7.0), whose `Client` embeds the AWS SDK v2
+`*s3.Client`, so uploads are `PutObject` with `ACL: public-read`. Bundle contents come
+from the existing `chromesweep.WriteBundle` (report.json/md + `frames/` + `logs/`).
+
+### Task 8: Tigris uploader + bundle-key helper
+
+**Files:**
+- Create: `cmd/gubald/svc/smoketest/tigris.go`
+- Test: `cmd/gubald/svc/smoketest/tigris_test.go`
+- Modify: `go.mod`, `go.sum`
+
+**Interfaces:**
+- Produces:
+  - `type bundleUploader interface { Upload(ctx context.Context, key string, data []byte, contentType string) (string, error) }`
+  - `func NewTigrisUploader(ctx context.Context, accessKeyID, secretAccessKey, bucket string) (bundleUploader, error)` — returns a `noopUploader` when creds are empty (gubald still runs without object storage).
+  - `type noopUploader struct{}` with `Upload` returning `("", nil)`.
+  - `func bundleKey(pr int, id string) string` → `pr-<pr>/<id>.zip`.
+
+- [ ] **Step 1: add the dependency**
+
+Run: `go get github.com/tigrisdata/storage-go@v0.7.0` (already resolvable; pulls aws-sdk-go-v2 s3 packages transitively). Do NOT bump the protovalidate pin.
+
+- [ ] **Step 2: write the failing tests** — `cmd/gubald/svc/smoketest/tigris_test.go`:
+
+```go
+package smoketest
+
+import (
+	"context"
+	"testing"
+)
+
+func TestBundleKey(t *testing.T) {
+	t.Parallel()
+	if got := bundleKey(1741, "abc-uuid"); got != "pr-1741/abc-uuid.zip" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestNoopUploader(t *testing.T) {
+	t.Parallel()
+	url, err := noopUploader{}.Upload(context.Background(), "k", []byte("x"), "application/zip")
+	if err != nil || url != "" {
+		t.Fatalf("noop = %q, %v", url, err)
+	}
+}
+
+func TestNewTigrisUploaderNoCreds(t *testing.T) {
+	t.Parallel()
+	u, err := NewTigrisUploader(context.Background(), "", "", "techaro-gubal")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := u.(noopUploader); !ok {
+		t.Fatalf("want noopUploader with empty creds, got %T", u)
+	}
+}
+```
+
+- [ ] **Step 3: write `tigris.go`**
+
+```go
+package smoketest
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	storage "github.com/tigrisdata/storage-go"
+)
+
+// bundleUploader stores a report bundle and returns a public URL to it.
+type bundleUploader interface {
+	Upload(ctx context.Context, key string, data []byte, contentType string) (string, error)
+}
+
+// tigrisUploader uploads public-read objects to a Tigris bucket and returns their
+// permanent public URL.
+type tigrisUploader struct {
+	client *storage.Client
+	bucket string
+}
+
+// NewTigrisUploader builds a Tigris-backed uploader. With empty credentials it
+// returns a noopUploader so gubald still runs without object-storage access.
+func NewTigrisUploader(ctx context.Context, accessKeyID, secretAccessKey, bucket string) (bundleUploader, error) {
+	if accessKeyID == "" || secretAccessKey == "" {
+		return noopUploader{}, nil
+	}
+	client, err := storage.New(ctx, storage.WithAccessKeypair(accessKeyID, secretAccessKey))
+	if err != nil {
+		return nil, fmt.Errorf("building tigris client: %w", err)
+	}
+	return &tigrisUploader{client: client, bucket: bucket}, nil
+}
+
+// Upload stores data at key as a public-read object and returns its public URL.
+func (u *tigrisUploader) Upload(ctx context.Context, key string, data []byte, contentType string) (string, error) {
+	_, err := u.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      aws.String(u.bucket),
+		Key:         aws.String(key),
+		Body:        bytes.NewReader(data),
+		ContentType: aws.String(contentType),
+		ACL:         types.ObjectCannedACLPublicRead,
+	})
+	if err != nil {
+		return "", fmt.Errorf("uploading %s to %s: %w", key, u.bucket, err)
+	}
+	return fmt.Sprintf("https://%s.t3.storage.dev/%s", u.bucket, key), nil
+}
+
+// noopUploader is used when no Tigris credentials are configured: uploads are
+// skipped and no URL is produced.
+type noopUploader struct{}
+
+// Upload does nothing and returns an empty URL and no error.
+func (noopUploader) Upload(context.Context, string, []byte, string) (string, error) {
+	return "", nil
+}
+
+// bundleKey is the object key for a run's bundle: pr-<pr>/<id>.zip. id is the
+// request UUID (unique per run), so re-runs never collide.
+func bundleKey(pr int, id string) string {
+	return fmt.Sprintf("pr-%d/%s.zip", pr, id)
+}
+```
+
+If `storage.New` fails at runtime for lack of a region, add `storage.WithRegion("auto")` to the options; verify it builds.
+
+- [ ] **Step 4: run tests** — `go test ./cmd/gubald/svc/smoketest/ -run 'TestBundleKey|TestNoopUploader|TestNewTigrisUploaderNoCreds'` → PASS. Then `go mod tidy` and confirm `git diff go.mod | grep -i protovalidate` prints nothing.
+
+- [ ] **Step 5: commit** — `cmd/gubald/svc/smoketest/tigris.go`, `tigris_test.go`, `go.mod`, `go.sum`; message `feat(gubald): tigris uploader for report bundles`.
+
+### Task 9: build + upload the bundle and link it in the comment
+
+**Files:**
+- Modify: `cmd/gubald/svc/smoketest/comments.go`, `comments_test.go`
+- Modify: `cmd/gubald/svc/smoketest/smoketest.go`
+- Modify: `cmd/gubald/svc/smoketest/submit_test.go` (update `New(...)` call sites)
+- Modify: `cmd/gubald/main.go`
+
+**Interfaces:**
+- Consumes: `bundleUploader`, `NewTigrisUploader`, `noopUploader`, `bundleKey` (Task 8); `chromesweep.RenderJSON/RenderMarkdown/WriteBundle`, `chromesweep.Report`.
+- Produces:
+  - `bodyResult(success bool, report, sha, bundleURL string) string` (new `bundleURL` param; link never truncated away).
+  - `func (s *Server) executeSweep(ctx context.Context, req *gubalv1.SmokeTestRequest) (chromesweep.Report, string, error)` — sweep returning the raw Report + frames dir (caller removes it).
+  - `New(gh prCommenter, up bundleUploader, allowedRepos []string, jobDeadline time.Duration) *Server`.
+
+- [ ] **Step 1: bodyResult keeps the bundle link outside truncation**
+
+In `comments.go`, generalize truncation and thread the bundle URL. Replace `capBody` with a size-limited `capTo`, and rewrite `bodyResult`:
+
+```go
+// capTo truncates s to at most max bytes, rune-safe, appending a note when it
+// does. Used to keep comment bodies under GitHub's per-comment limit.
+func capTo(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	const note = "\n\n_…report truncated (exceeded GitHub's comment size limit)_"
+	limit := max - len(note)
+	if limit < 0 {
+		limit = 0
+	}
+	for limit > 0 && !utf8.RuneStart(s[limit]) {
+		limit--
+	}
+	return s[:limit] + note
+}
+
+// bodyResult is posted when the sweep finishes. The report is truncated if needed,
+// but the header and the bundle link (if any) are always preserved.
+func bodyResult(success bool, report, sha, bundleURL string) string {
+	header := "✅ Gubal smoke test passed"
+	if !success {
+		header = "❌ Gubal smoke test found failures"
+	}
+	head := header + shaSuffix(sha) + "\n\n"
+	tail := ""
+	if bundleURL != "" {
+		tail = fmt.Sprintf("\n\n📦 [Download report bundle (frames + logs)](%s)", bundleURL)
+	}
+	return head + capTo(report, maxCommentBytes-len(head)-len(tail)) + tail
+}
+```
+
+Update `bodyRunError` to use `capTo(fmt.Sprintf(...), maxCommentBytes)` instead of `capBody(...)`. Keep `maxCommentBytes` and the `unicode/utf8` import. Remove the now-unused `capBody` (or keep it delegating to `capTo`; prefer removing it and updating its test).
+
+In `comments_test.go`: update `bodyResult` calls to the 4-arg form, replace `TestCapBody` with an equivalent `TestCapTo` (`capTo(big, maxCommentBytes)` stays under the limit and contains "truncated"), keep `TestBodyResultTruncatesLargeReport` (4-arg call), and add:
+
+```go
+func TestBodyResultBundleLink(t *testing.T) {
+	t.Parallel()
+	b := bodyResult(true, "REPORT", "sha1", "https://techaro-gubal.t3.storage.dev/pr-1/abc.zip")
+	if !strings.Contains(b, "📦") || !strings.Contains(b, "pr-1/abc.zip") {
+		t.Fatalf("missing bundle link: %q", b)
+	}
+	// No link when URL is empty.
+	if strings.Contains(bodyResult(true, "REPORT", "sha1", ""), "📦") {
+		t.Fatal("unexpected bundle marker with empty URL")
+	}
+}
+
+func TestBodyResultBundleLinkSurvivesTruncation(t *testing.T) {
+	t.Parallel()
+	url := "https://techaro-gubal.t3.storage.dev/pr-1/abc.zip"
+	b := bodyResult(true, strings.Repeat("R", maxCommentBytes+5000), "sha1", url)
+	if len(b) > maxCommentBytes {
+		t.Fatalf("over limit: %d", len(b))
+	}
+	if !strings.Contains(b, url) {
+		t.Fatal("bundle link was truncated away")
+	}
+}
+```
+
+- [ ] **Step 2: extract `executeSweep` and thread the uploader into the goroutine**
+
+In `smoketest.go`:
+
+Add `uploader bundleUploader` to `Server` and to `New`:
+```go
+func New(gh prCommenter, up bundleUploader, allowedRepos []string, jobDeadline time.Duration) *Server {
+	// ... existing allowlist build ...
+	return &Server{gh: gh, uploader: up, allowed: allowed, jobDeadline: jobDeadline}
+}
+```
+
+Split the sweep so the raw Report + frames dir are available before cleanup:
+```go
+// executeSweep runs the browser sweep and returns the raw Report plus the frames
+// dir; the caller owns removing the dir. Assumes req is validated and the sweep
+// semaphore is held.
+func (s *Server) executeSweep(ctx context.Context, req *gubalv1.SmokeTestRequest) (chromesweep.Report, string, error) {
+	browsers, err := browsersFor(req)
+	if err != nil {
+		return chromesweep.Report{}, "", twirp.NewError(twirp.InvalidArgument, err.Error())
+	}
+	cs, err := loadClientset()
+	if err != nil {
+		return chromesweep.Report{}, "", twirp.InternalErrorWith(fmt.Errorf("building kube client: %w", err))
+	}
+	cfg := chromesweep.DefaultConfig()
+	cfg.AnubisImage = req.GetAnubisImage()
+	cfg.Browsers = browsers
+
+	framesDir, err := os.MkdirTemp("", "smoketest-frames-")
+	if err != nil {
+		return chromesweep.Report{}, "", twirp.InternalErrorWith(err)
+	}
+	rep, err := chromesweep.Run(ctx, chromesweep.NewCluster(cs, cfg.Namespace), cfg, framesDir)
+	if err != nil {
+		os.RemoveAll(framesDir)
+		return chromesweep.Report{}, "", twirp.InternalErrorWith(err)
+	}
+	return rep, framesDir, nil
+}
+```
+
+Rewrite `runSweep` (sync path, unchanged behavior) to build on it:
+```go
+func (s *Server) runSweep(ctx context.Context, req *gubalv1.SmokeTestRequest) (*gubalv1.SmokeTestResult, error) {
+	rep, framesDir, err := s.executeSweep(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(framesDir)
+	return reportToResult(rep), nil
+}
+```
+Extract the existing Report→`*SmokeTestResult` mapping loop into a `reportToResult(rep chromesweep.Report) *gubalv1.SmokeTestResult` helper (same code, moved) so both the sync path and any caller use it.
+
+Add the bundle helper:
+```go
+// uploadBundle builds the report bundle and uploads it, returning its public URL
+// or "" (best-effort; failures are logged, never fatal).
+func (s *Server) uploadBundle(ctx context.Context, rep chromesweep.Report, framesDir, md string, pr int, id string) string {
+	js, err := chromesweep.RenderJSON(rep)
+	if err != nil {
+		slog.ErrorContext(ctx, "rendering bundle json failed", "err", err)
+		return ""
+	}
+	path := filepath.Join(framesDir, "report.zip")
+	if err := chromesweep.WriteBundle(path, js, []byte(md), rep.Results); err != nil {
+		slog.ErrorContext(ctx, "writing bundle failed", "err", err)
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		slog.ErrorContext(ctx, "reading bundle failed", "err", err)
+		return ""
+	}
+	url, err := s.uploader.Upload(ctx, bundleKey(pr, id), data, "application/zip")
+	if err != nil {
+		slog.ErrorContext(ctx, "uploading bundle failed", "pr", pr, "err", err)
+		return ""
+	}
+	return url
+}
+```
+
+In `SubmitSmokeTest`'s goroutine, replace the `s.runSweep(bg, test)` result handling with `executeSweep` + bundling, and post/upload on a fresh context (the sweep may exhaust `bg`):
+```go
+		rep, framesDir, err := s.executeSweep(bg, test)
+
+		pubCtx, pubCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer pubCancel()
+
+		var body string
+		if err != nil {
+			slog.ErrorContext(bg, "background sweep failed", "repo", repo, "pr", pr, "err", err)
+			body = bodyRunError(sha, err)
+		} else {
+			defer os.RemoveAll(framesDir)
+			md := chromesweep.RenderMarkdown(rep)
+			bundleURL := s.uploadBundle(pubCtx, rep, framesDir, md, pr, test.GetId())
+			body = bodyResult(rep.AllPassed(), md, sha, bundleURL)
+		}
+		if err := s.gh.Comment(pubCtx, repo, pr, body); err != nil {
+			slog.ErrorContext(pubCtx, "posting result comment failed", "repo", repo, "pr", pr, "err", err)
+		}
+```
+(The ack comment above still posts on `bg`; keep it. Add `"path/filepath"` to imports.)
+
+- [ ] **Step 3: update `submit_test.go`** — every `New(fc, ...)` becomes `New(fc, noopUploader{}, ...)`. The existing tests (allowlist/busy/invalid) don't run the goroutine, so the uploader is never called.
+
+- [ ] **Step 4: wire `main.go`**
+
+Flags:
+```go
+	tigrisAccessKeyID     = flag.String("tigris-access-key-id", "", "Tigris access key ID for uploading report bundles (env TIGRIS_ACCESS_KEY_ID)")
+	tigrisSecretAccessKey = flag.String("tigris-secret-access-key", "", "Tigris secret access key (env TIGRIS_SECRET_ACCESS_KEY)")
+	gubalBucket           = flag.String("gubal-bucket", "techaro-gubal", "Tigris bucket for report bundles (env GUBAL_BUCKET)")
+```
+After building the commenter, build the uploader and pass it to `New`:
+```go
+	uploader, err := smoketest.NewTigrisUploader(ctx, *tigrisAccessKeyID, *tigrisSecretAccessKey, *gubalBucket)
+	if err != nil {
+		return fmt.Errorf("building tigris uploader: %w", err)
+	}
+	if *tigrisAccessKeyID == "" {
+		lg.Warn("no -tigris-access-key-id configured; report bundles will not be uploaded")
+	}
+	smokeTest := smoketest.New(commenter, uploader, allowed, *jobDeadline)
+```
+(`ctx` is in scope in `run`; `lg` is the slog logger already built there.)
+
+- [ ] **Step 5: verify** — `go test ./cmd/gubald/svc/smoketest/`, `go test -race ./cmd/gubald/svc/smoketest/`, `go vet ./cmd/gubald/...`, `go build -o ./var/gubald ./cmd/gubald`. All green.
+
+- [ ] **Step 6: commit** — the five files; message `feat(gubald): upload report bundle to Tigris and link it in the PR comment`.
+
 ## Self-Review
 
-- **Spec coverage:** proto (Task 1), go-github wrapper (Task 2), comment bodies (Task 3), server refactor + wiring + allowlist (Task 4), async handler + busy/allowlist behavior + background context/deadline (Task 5), gubalctl dispatch (Task 6), verification + CI doc + PR #1741 validation (Task 7). All spec sections mapped.
+- **Spec coverage:** proto (Task 1), go-github wrapper (Task 2), comment bodies (Task 3), server refactor + wiring + allowlist (Task 4), async handler + busy/allowlist behavior + background context/deadline (Task 5), gubalctl dispatch (Task 6), verification + CI doc + PR #1741 validation (Task 7), Tigris uploader (Task 8), bundle upload + comment link (Task 9). All spec sections mapped.
 - **Type consistency:** `Comment(ctx, repo string, pr int, body string) error` is identical across `prCommenter` (Task 4), `githubCommenter` (Task 2), and `fakeCommenter` (Task 5). `New(prCommenter, []string, time.Duration)` matches its call sites in `main.go` (Task 4) and tests (Task 5). `runSweep(ctx, *SmokeTestRequest)` defined in Task 4, used in Task 5. Body builders defined in Task 3, used in Task 5.
 - **Placeholders:** none — every step has concrete code or an exact command.
