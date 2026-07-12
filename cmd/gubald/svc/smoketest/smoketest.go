@@ -3,6 +3,7 @@ package smoketest
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -114,6 +115,65 @@ func (s *Server) runSweep(ctx context.Context, req *gubalv1.SmokeTestRequest) (*
 		})
 	}
 	return result, nil
+}
+
+// SubmitSmokeTest accepts a sweep, returns immediately, and runs it in the
+// background, posting an ack comment on accept and a result comment on
+// completion to the request's GitHub PR thread. A sweep already in progress is
+// rejected (ResourceExhausted) with a best-effort busy note posted to the PR.
+func (s *Server) SubmitSmokeTest(ctx context.Context, req *gubalv1.SubmitSmokeTestRequest) (*gubalv1.SubmitSmokeTestResponse, error) {
+	if err := protovalidate.Validate(req); err != nil {
+		return nil, twirp.NewError(twirp.InvalidArgument, err.Error())
+	}
+
+	gh := req.GetGithub()
+	if _, ok := s.allowed[strings.ToLower(gh.GetRepo())]; !ok {
+		return nil, twirp.NewError(twirp.PermissionDenied, "repo not in gubald's allowlist")
+	}
+
+	repo := gh.GetRepo()
+	pr := int(gh.GetPrNumber())
+	sha := gh.GetCommitSha()
+	test := req.GetTest()
+
+	// Try to become the single active sweep. If busy, post a best-effort note
+	// and reject rather than queueing.
+	select {
+	case sweepSem <- struct{}{}:
+		// acquired; released by the background goroutine below.
+	default:
+		if err := s.gh.Comment(ctx, repo, pr, bodyBusy()); err != nil {
+			slog.WarnContext(ctx, "posting busy note failed", "repo", repo, "pr", pr, "err", err)
+		}
+		return nil, twirp.NewError(twirp.ResourceExhausted, "a smoke test is already running; try again later")
+	}
+
+	versionCount := len(test.GetChromeVersions()) + len(test.GetFirefoxVersions())
+
+	go func() {
+		defer func() { <-sweepSem }()
+
+		bg, cancel := context.WithTimeout(context.Background(), s.jobDeadline)
+		defer cancel()
+
+		if err := s.gh.Comment(bg, repo, pr, bodyAck(sha, versionCount)); err != nil {
+			slog.WarnContext(bg, "posting ack comment failed", "repo", repo, "pr", pr, "err", err)
+		}
+
+		result, err := s.runSweep(bg, test)
+		var body string
+		if err != nil {
+			slog.ErrorContext(bg, "background sweep failed", "repo", repo, "pr", pr, "err", err)
+			body = bodyRunError(sha, err)
+		} else {
+			body = bodyResult(result.GetSuccess(), result.GetReport(), sha)
+		}
+		if err := s.gh.Comment(bg, repo, pr, body); err != nil {
+			slog.ErrorContext(bg, "posting result comment failed", "repo", repo, "pr", pr, "err", err)
+		}
+	}()
+
+	return &gubalv1.SubmitSmokeTestResponse{Id: test.GetId(), Accepted: true}, nil
 }
 
 // browsersFor builds the browser targets for a request: Chrome + Firefox presets
