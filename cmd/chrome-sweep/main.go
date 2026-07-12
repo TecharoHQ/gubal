@@ -1,8 +1,9 @@
-// Command chrome-sweep tests a list of Chrome image tags in bounded parallel: for
-// each tag it creates a per-version chrome Deployment/Service/NetworkPolicy and
-// smoke Job (all named chrome-<tag>), waits for rollout, runs the smoke Job,
-// records a pass/fail + screenshot, then tears the version's resources down. It is
-// a thin CLI over the importable github.com/TecharoHQ/gubal/chromesweep package.
+// Command chrome-sweep tests a list of archived Chrome and Firefox image tags
+// in bounded parallel: for each tag it creates a per-version browser
+// Deployment/Service/NetworkPolicy and smoke Job (named <browser>-<tag>), waits
+// for rollout, runs the smoke Job, records a pass/fail + screenshot, then tears
+// the version's resources down. It is a thin CLI over the importable
+// github.com/TecharoHQ/gubal/chromesweep package.
 package main
 
 import (
@@ -12,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/TecharoHQ/gubal/chromesweep"
 	"k8s.io/client-go/kubernetes"
@@ -21,15 +23,7 @@ import (
 func main() {
 	cfg := chromesweep.DefaultConfig()
 	kubeconfig := flag.String("kubeconfig", defaultKubeconfig(), "path to kubeconfig")
-	flag.StringVar(&cfg.Namespace, "namespace", cfg.Namespace, "namespace holding the chrome resources and smoke Job")
-	flag.StringVar(&cfg.Deployment, "deployment", cfg.Deployment, "base name for per-version chrome resources (Deployment/Service/NetworkPolicy)")
-	flag.StringVar(&cfg.Container, "container", cfg.Container, "container within the Deployment to re-image")
-	flag.StringVar(&cfg.ImageRepo, "image-repo", cfg.ImageRepo, "image repository; final ref is <repo>:<tag>")
-	flag.StringVar(&cfg.JobManifest, "job-manifest", cfg.JobManifest, "path to the smoke Job manifest to run each version")
-	flag.StringVar(&cfg.JobName, "job-name", cfg.JobName, "base name for per-version smoke Jobs; per version appends -<tag>")
-	flag.StringVar(&cfg.DeploymentManifest, "deployment-manifest", cfg.DeploymentManifest, "base Deployment manifest to template per version")
-	flag.StringVar(&cfg.ServiceManifest, "service-manifest", cfg.ServiceManifest, "base Service manifest to template per version")
-	flag.StringVar(&cfg.NetworkPolicyManifest, "networkpolicy-manifest", cfg.NetworkPolicyManifest, "base NetworkPolicy manifest to template per version")
+	flag.StringVar(&cfg.Namespace, "namespace", cfg.Namespace, "namespace holding the browser resources and smoke Jobs")
 	flag.StringVar(&cfg.AnubisManifest, "anubis-manifest", cfg.AnubisManifest, "Anubis Deployment manifest; the tested Anubis image ref is read from it")
 	flag.StringVar(&cfg.AnubisContainer, "anubis-container", cfg.AnubisContainer, "container in the Anubis Deployment that holds the Anubis image")
 	flag.StringVar(&cfg.AnubisImage, "anubis-image", cfg.AnubisImage, "override the Anubis image ref (default: the ref from -anubis-manifest); when set, the live Anubis Deployment is re-imaged for the run and restored after")
@@ -37,21 +31,55 @@ func main() {
 	flag.StringVar(&cfg.CollectorPVC, "pvc", cfg.CollectorPVC, "PVC that holds captured frames")
 	flag.StringVar(&cfg.OutDir, "out", cfg.OutDir, "directory to write the report and copied frames into")
 	flag.DurationVar(&cfg.ReadyTimeout, "ready-timeout", cfg.ReadyTimeout, "max wait for a version's rollout to become Ready")
-	flag.DurationVar(&cfg.JobTimeout, "job-timeout", cfg.JobTimeout, "max wait for the smoke Job to finish")
+	flag.DurationVar(&cfg.JobTimeout, "job-timeout", cfg.JobTimeout, "max wait for a smoke Job to finish")
+
+	// Default to the preset version lists; either flag overrides its browser.
+	chromeVersions := flag.String("chrome-versions", strings.Join(chromesweep.ChromeBrowser().Versions, ","), "comma-separated Chrome major versions to sweep (empty to skip Chrome)")
+	firefoxVersions := flag.String("firefox-versions", strings.Join(chromesweep.FirefoxBrowser().Versions, ","), "comma-separated Firefox major versions to sweep (empty to skip Firefox)")
 	flag.Parse()
 
-	versions, err := chromesweep.ParseVersions(flag.Args())
+	browsers, err := browsersFromFlags(*chromeVersions, *firefoxVersions)
 	if err != nil {
 		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 		slog.Error("bad versions", "err", err)
 		os.Exit(1)
 	}
-	cfg.Versions = versions
+	cfg.Browsers = browsers
 
 	if err := run(*kubeconfig, cfg); err != nil {
 		slog.Error("fatal", "err", err)
 		os.Exit(1)
 	}
+}
+
+// browsersFromFlags builds the browser targets from comma-separated version
+// lists. An empty list skips that browser; at least one browser must survive.
+func browsersFromFlags(chromeCSV, firefoxCSV string) ([]chromesweep.Browser, error) {
+	var browsers []chromesweep.Browser
+	for _, spec := range []struct {
+		csv     string
+		browser chromesweep.Browser
+	}{
+		{chromeCSV, chromesweep.ChromeBrowser()},
+		{firefoxCSV, chromesweep.FirefoxBrowser()},
+	} {
+		fields := strings.Split(spec.csv, ",")
+		vs, err := chromesweep.ParseVersions(fields)
+		if err != nil {
+			// Empty list -> skip this browser rather than failing the run.
+			if strings.TrimSpace(spec.csv) == "" {
+				continue
+			}
+			return nil, fmt.Errorf("%s: %w", spec.browser.Name, err)
+		}
+		b := spec.browser
+		b.Versions = vs
+		browsers = append(browsers, b)
+	}
+	if len(browsers) == 0 {
+		return nil, fmt.Errorf("no versions given for any browser")
+	}
+	return browsers, nil
 }
 
 func defaultKubeconfig() string {
