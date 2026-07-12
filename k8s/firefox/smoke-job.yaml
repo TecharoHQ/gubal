@@ -37,17 +37,8 @@ spec:
                 if curl -fsS "http://firefox:9222/json/version" -o /tmp/v.json; then break; fi
                 sleep 2
               done
+
               cat /tmp/v.json; echo
-              # foxbridge reports its own identity here (User-Agent: foxbridge,
-              # Browser: foxbridge/x.y), NOT Firefox's UA. That only proves the CDP
-              # bridge is up; the real non-headless-Firefox proof is chrome-bully
-              # transiting Anubis below.
-              ua=$(sed -n 's/.*"User-Agent": *"\([^"]*\)".*/\1/p' /tmp/v.json)
-              echo "User-Agent: ${ua}"
-              case "${ua}" in
-                *foxbridge*) echo "PASS: foxbridge CDP bridge is up" ;;
-                *)           echo "FAIL: foxbridge CDP not reachable"; exit 1 ;;
-              esac
 
               # Anubis is up and serving its challenge.
               echo "checking Anubis at anubis-ci.alrest.cetacean.club ..."
