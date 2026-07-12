@@ -24,7 +24,7 @@ func TestParseVersions(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := parseVersions(tt.input)
+			got, err := parseVersions(tt.input, "chrome")
 			if (err != nil) != tt.wantErr {
 				t.Logf("want error: %v", tt.wantErr)
 				t.Logf("got:  %v", err)

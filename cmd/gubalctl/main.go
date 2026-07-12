@@ -30,7 +30,8 @@ var (
 	region          = flag.String("region", "yow", "SigV4A region gubald verifies")
 	service         = flag.String("service", "gubal", "SigV4A service name gubald verifies")
 	anubisImage     = flag.String("anubis-image", "", "Anubis image to test against")
-	chromeVersions  = flag.String("chrome-versions", "", "comma-separated Chrome major versions to test, e.g. 120,150")
+	chromeVersions  = flag.String("chrome-versions", "75,80,85,90,95,100,105,110,115,120,125,130,135,140,145,150", "comma-separated Chrome major versions to test")
+	firefoxVersions = flag.String("firefox-versions", "129,135,140,145,150,152", "comma-separated Firefox major versions to test")
 	id              = flag.String("id", "", "request id (UUID); generated when empty")
 )
 
@@ -56,7 +57,11 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("both -access-key-id and -secret-access-key are required (env ACCESS_KEY_ID / SECRET_ACCESS_KEY)")
 	}
 
-	versions, err := parseVersions(*chromeVersions)
+	chromeVs, err := parseVersions(*chromeVersions, "chrome")
+	if err != nil {
+		return err
+	}
+	firefoxVs, err := parseVersions(*firefoxVersions, "firefox")
 	if err != nil {
 		return err
 	}
@@ -78,11 +83,12 @@ func run(ctx context.Context) error {
 
 	client := gubalv1.NewSmokeTestServiceProtobufClient(*baseURL, &http.Client{Transport: rt})
 
-	slog.InfoContext(ctx, "submitting smoke test", "url", *baseURL, "id", reqID, "anubis_image", *anubisImage, "chrome_versions", versions)
+	slog.InfoContext(ctx, "submitting smoke test", "url", *baseURL, "id", reqID, "anubis_image", *anubisImage, "chrome_versions", chromeVs, "firefox_versions", firefoxVs)
 	res, err := client.SmokeTest(ctx, &gubalv1.SmokeTestRequest{
-		Id:             reqID,
-		AnubisImage:    *anubisImage,
-		ChromeVersions: versions,
+		Id:              reqID,
+		AnubisImage:     *anubisImage,
+		ChromeVersions:  chromeVs,
+		FirefoxVersions: firefoxVs,
 	})
 	if err != nil {
 		return fmt.Errorf("smoke test request failed: %w", err)
@@ -95,8 +101,8 @@ func run(ctx context.Context) error {
 	return nil
 }
 
-// parseVersions turns a comma-separated list of Chrome majors into int32s.
-func parseVersions(s string) ([]int32, error) {
+// parseVersions turns a comma-separated list of majors into int32s.
+func parseVersions(s, browser string) ([]int32, error) {
 	fields := strings.Split(s, ",")
 	out := make([]int32, 0, len(fields))
 	for _, f := range fields {
@@ -106,12 +112,12 @@ func parseVersions(s string) ([]int32, error) {
 		}
 		n, err := strconv.Atoi(f)
 		if err != nil {
-			return nil, fmt.Errorf("invalid chrome version %q: %w", f, err)
+			return nil, fmt.Errorf("invalid %s version %q: %w", browser, f, err)
 		}
 		out = append(out, int32(n))
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("-chrome-versions is required (comma-separated, e.g. 120,150)")
+		return nil, fmt.Errorf("-%s-versions is required (comma-separated)", browser)
 	}
 	return out, nil
 }
