@@ -45,6 +45,20 @@ func TestDefaultConfigSweepsBothBrowsers(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigLoadsPolicies(t *testing.T) {
+	cfg := DefaultConfig()
+	if len(cfg.Policies) < 2 {
+		t.Fatalf("DefaultConfig should carry the embedded policies, got %d", len(cfg.Policies))
+	}
+	seen := map[string]bool{}
+	for _, p := range cfg.Policies {
+		seen[p.Name] = true
+	}
+	if !seen["default"] {
+		t.Fatalf(`DefaultConfig missing the "default" policy; have %v`, seen)
+	}
+}
+
 // TestLoadFirefoxManifests decodes the real k8s/firefox/*.yaml so a malformed
 // manifest fails here rather than at cluster time.
 func TestLoadFirefoxManifests(t *testing.T) {

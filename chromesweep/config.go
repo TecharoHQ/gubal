@@ -6,7 +6,10 @@
 // importable so services (not just the CLI) can drive a sweep.
 package chromesweep
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // Browser describes one browser target to sweep: its image repo, the base names
 // for its per-version resources, the manifests to template, and the versions.
@@ -68,6 +71,9 @@ type Config struct {
 	ReadyTimeout    time.Duration
 	JobTimeout      time.Duration
 	Browsers        []Browser
+	// Policies are the Anubis rulesets to sweep every browser against, one test
+	// pass per policy. Defaults to the rulesets embedded under policies/.
+	Policies []Policy
 }
 
 // DefaultConfig returns a Config with the standard defaults filled in, sweeping
@@ -84,5 +90,17 @@ func DefaultConfig() Config {
 		ReadyTimeout:    3 * time.Minute,
 		JobTimeout:      4 * time.Minute,
 		Browsers:        []Browser{ChromeBrowser(), FirefoxBrowser()},
+		Policies:        mustLoadPolicies(),
 	}
+}
+
+// mustLoadPolicies loads the embedded policy rulesets, panicking on failure. The
+// files are compiled into the binary, so an error here is a build/programming bug,
+// not a runtime condition.
+func mustLoadPolicies() []Policy {
+	p, err := LoadPolicies()
+	if err != nil {
+		panic(fmt.Sprintf("loading embedded anubis policies: %v", err))
+	}
+	return p
 }
