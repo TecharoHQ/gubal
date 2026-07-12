@@ -36,7 +36,7 @@ var (
 
 	githubRepo = flag.String("github-repo", "", "owner/repo of the PR to post results to (env: GITHUB_REPO); enables async mode with -pr-number")
 	prNumber   = flag.Int("pr-number", 0, "PR number to post results to (env: PR_NUMBER)")
-	commitSHA  = flag.String("commit-sha", "", "commit SHA under test, shown in the report (env: GITHUB_SHA)")
+	commitSHA  = flag.String("github-sha", "", "commit SHA under test, shown in the report (env: GITHUB_SHA)")
 )
 
 func main() {
