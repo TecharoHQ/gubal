@@ -951,13 +951,20 @@ The Anubis `.github/workflows/gubal.yml` "Run gubal test" step becomes a single 
 
 ## Follow-up: attach the report bundle to the PR comment (Tasks 8–9)
 
+> **Revision (post-implementation):** Tigris does not serve public-read objects, so
+> the public-read ACL + permanent URL below was replaced by a **24-hour presigned GET
+> URL** (commit `bd64d4a`). `Upload` now does a plain private `PutObject` (no ACL) then
+> `s3.NewPresignClient(...).PresignGetObject(..., s3.WithPresignExpires(24h))` and returns
+> `req.URL`; the PR comment notes the link expires in 24h. The Task 8 code block below is
+> the original plan; treat the presign version as authoritative.
+
 GitHub's API can't attach a binary file to a comment (attachments are a browser-only
 `user-attachments` flow). So gubald uploads the `report.zip` bundle to the Tigris
-bucket `techaro-gubal` as a **public-read** object and links its permanent URL
-(`https://techaro-gubal.t3.storage.dev/<key>`) in the result comment. Upload uses
-`github.com/tigrisdata/storage-go` (v0.7.0), whose `Client` embeds the AWS SDK v2
-`*s3.Client`, so uploads are `PutObject` with `ACL: public-read`. Bundle contents come
-from the existing `chromesweep.WriteBundle` (report.json/md + `frames/` + `logs/`).
+bucket `techaro-gubal` and links a time-limited download URL in the result comment.
+Upload uses `github.com/tigrisdata/storage-go` (v0.7.0), whose `Client` embeds the AWS
+SDK v2 `*s3.Client`, so uploads are `PutObject` (private) plus a presigned GET. Bundle
+contents come from the existing `chromesweep.WriteBundle` (report.json/md + `frames/` +
+`logs/`).
 
 **Credentials:** gubald does NOT take Tigris key flags. `storage.New(ctx)` (no keypair
 option) uses the **standard AWS credential chain** — env `AWS_ACCESS_KEY_ID` /
