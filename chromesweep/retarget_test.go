@@ -1,4 +1,4 @@
-package main
+package chromesweep
 
 import (
 	"strings"
@@ -114,15 +114,15 @@ func TestRetargetJob(t *testing.T) {
 }
 
 func TestLoadManifests(t *testing.T) {
-	dep, err := loadDeployment("../../k8s/deployment.yaml", "ci")
+	dep, err := loadDeployment("../k8s/deployment.yaml", "ci")
 	if err != nil || dep.Name != "chrome" || dep.Namespace != "ci" {
 		t.Fatalf("loadDeployment: %v name=%q ns=%q", err, dep.GetName(), dep.GetNamespace())
 	}
-	svc, err := loadService("../../k8s/service.yaml", "ci")
+	svc, err := loadService("../k8s/service.yaml", "ci")
 	if err != nil || svc.Name != "chrome" {
 		t.Fatalf("loadService: %v name=%q", err, svc.GetName())
 	}
-	np, err := loadNetworkPolicy("../../k8s/networkpolicy.yaml", "ci")
+	np, err := loadNetworkPolicy("../k8s/networkpolicy.yaml", "ci")
 	if err != nil || np.Name != "chrome-lockdown" {
 		t.Fatalf("loadNetworkPolicy: %v name=%q", err, np.GetName())
 	}
@@ -132,7 +132,7 @@ func TestLoadManifests(t *testing.T) {
 // loadDeployment reads the Deployment (first doc) and that the anubis container's
 // image ref is recoverable from it — that ref is what prepareAnubis reports.
 func TestLoadAnubisManifestImage(t *testing.T) {
-	dep, err := loadDeployment("../../k8s/anubis/anubis.yaml", "ci")
+	dep, err := loadDeployment("../k8s/anubis/anubis.yaml", "ci")
 	if err != nil {
 		t.Fatalf("loadDeployment(anubis): %v", err)
 	}

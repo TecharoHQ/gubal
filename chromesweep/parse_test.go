@@ -1,4 +1,4 @@
-package main
+package chromesweep
 
 import (
 	"reflect"
@@ -20,7 +20,7 @@ func TestParseVersions(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseVersions(tt.in)
+			got, err := ParseVersions(tt.in)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}

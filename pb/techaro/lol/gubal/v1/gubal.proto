@@ -1,0 +1,46 @@
+syntax = "proto3";
+package techaro.lol.gubal.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+service SmokeTestService {
+  rpc SmokeTest(SmokeTestRequest) returns (SmokeTestResult) {}
+}
+
+message SmokeTestRequest {
+  string id = 1 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).string.uuid = true
+  ];
+  string anubis_image = 2 [(buf.validate.field).required = true];
+  repeated int32 chrome_versions = 3 [
+    (buf.validate.field).required = true,
+    (buf.validate.field).int32.gt = 70
+  ];
+}
+
+message SmokeTestResult {
+  bool success = 1;
+  string report = 2;
+  repeated ChromeVersionResult results = 3;
+}
+
+// ChromeVersionResult mirrors chromesweep.Result: the outcome of testing one
+// Chrome image tag. The captured screenshot is not carried here — frames are
+// uploaded to object storage separately.
+message ChromeVersionResult {
+  string tag = 1;
+  SweepStatus status = 2;
+  string chrome_version = 3;
+  string reported_ua = 4;
+  string detail = 5;
+}
+
+enum SweepStatus {
+  SWEEP_STATUS_UNSPECIFIED = 0;
+  SWEEP_STATUS_PASS = 1;
+  SWEEP_STATUS_FAIL = 2;
+  SWEEP_STATUS_NOT_READY = 3;
+  SWEEP_STATUS_ERROR = 4;
+}

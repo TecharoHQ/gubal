@@ -1,4 +1,4 @@
-package main
+package chromesweep
 
 import (
 	"archive/zip"
@@ -26,7 +26,7 @@ func TestWriteBundle(t *testing.T) {
 	reportJSON := []byte(`{"results":[]}`)
 	reportMarkdown := []byte("# Chrome version sweep — 2/3 passed\n")
 	zipPath := filepath.Join(dir, "report.zip")
-	if err := writeBundle(zipPath, reportJSON, reportMarkdown, results); err != nil {
+	if err := WriteBundle(zipPath, reportJSON, reportMarkdown, results); err != nil {
 		t.Fatal(err)
 	}
 

@@ -1,4 +1,4 @@
-package main
+package chromesweep
 
 import (
 	"encoding/json"
@@ -32,8 +32,19 @@ type Report struct {
 	Results     []Result `json:"results"`
 }
 
-// renderMarkdown produces a human-readable summary table.
-func renderMarkdown(rep Report) string {
+// AllPassed reports whether every tested version passed. An empty run counts as
+// passing (nothing failed).
+func (r Report) AllPassed() bool {
+	for _, res := range r.Results {
+		if res.Status != StatusPass {
+			return false
+		}
+	}
+	return true
+}
+
+// RenderMarkdown produces a human-readable summary table.
+func RenderMarkdown(rep Report) string {
 	var b strings.Builder
 	passed := 0
 	for _, r := range rep.Results {
@@ -61,7 +72,7 @@ func dash(s string) string {
 	return s
 }
 
-// renderJSON serializes the report as indented JSON.
-func renderJSON(rep Report) ([]byte, error) {
+// RenderJSON serializes the report as indented JSON.
+func RenderJSON(rep Report) ([]byte, error) {
 	return json.MarshalIndent(rep, "", "  ")
 }

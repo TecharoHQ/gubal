@@ -1,4 +1,4 @@
-package main
+package chromesweep
 
 import (
 	"bufio"
@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// parseVersions trims and de-empties the given tags, rejects duplicates, and
+// ParseVersions trims and de-empties the given tags, rejects duplicates, and
 // errors if nothing usable remains.
-func parseVersions(args []string) ([]string, error) {
+func ParseVersions(args []string) ([]string, error) {
 	seen := map[string]bool{}
 	out := make([]string, 0, len(args))
 	for _, a := range args {

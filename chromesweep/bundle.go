@@ -1,4 +1,4 @@
-package main
+package chromesweep
 
 import (
 	"archive/zip"
@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 )
 
-// writeBundle writes a zip archive to path containing report.json, report.md, and
+// WriteBundle writes a zip archive to path containing report.json, report.md, and
 // every result's captured frame under frames/. Results without a captured frame
 // are skipped.
-func writeBundle(path string, reportJSON, reportMarkdown []byte, results []Result) (err error) {
+func WriteBundle(path string, reportJSON, reportMarkdown []byte, results []Result) (err error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return err

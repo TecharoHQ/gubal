@@ -1,4 +1,4 @@
-package main
+package chromesweep
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 )
 
 func TestRenderMarkdown(t *testing.T) {
-	md := renderMarkdown(Report{
+	md := RenderMarkdown(Report{
 		AnubisImage: "reg/backend:v9",
 		Results: []Result{
 			{Tag: "150", Status: StatusPass, ChromeVersion: "150.0.7871.114", ReportedUA: "Chrome/150", FramePath: "var/sweep/150.png"},
@@ -22,14 +22,14 @@ func TestRenderMarkdown(t *testing.T) {
 }
 
 func TestRenderMarkdownOmitsAnubisWhenEmpty(t *testing.T) {
-	md := renderMarkdown(Report{Results: []Result{{Tag: "150", Status: StatusPass}}})
+	md := RenderMarkdown(Report{Results: []Result{{Tag: "150", Status: StatusPass}}})
 	if strings.Contains(md, "Anubis image:") {
 		t.Fatalf("empty anubis image should be omitted:\n%s", md)
 	}
 }
 
 func TestRenderJSON(t *testing.T) {
-	b, err := renderJSON(Report{
+	b, err := RenderJSON(Report{
 		AnubisImage: "reg/backend:v9",
 		Results:     []Result{{Tag: "150", Status: StatusPass}},
 	})
