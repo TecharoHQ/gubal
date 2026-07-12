@@ -37,8 +37,6 @@ RUN set -eux; \
     echo "${TINI_SHA256}  /usr/local/bin/tini" | sha256sum -c -; \
     chmod +x /usr/local/bin/tini
 
-# The CDP bridge itself — the statically-linked foxbridge binary from the base image.
-COPY --from=ghcr.io/techarohq/gubal/foxbridge:latest /usr/local/bin/foxbridge /usr/local/bin/foxbridge
 COPY docker/firefox-entrypoint.sh /usr/local/bin/firefox-entrypoint.sh
 RUN chmod +x /usr/local/bin/firefox-entrypoint.sh
 
@@ -61,6 +59,12 @@ RUN set -eux; \
     tar -xaf /tmp/firefox.tar -C /opt; \
     rm -f /tmp/firefox.tar; \
     test -x /opt/firefox/firefox
+
+# The CDP bridge itself — the statically-linked foxbridge binary, pulled from the
+# upstream foxbridge image (github.com/VulpineOS/foxbridge). Kept as the final build
+# step so it is layered on top of the era's OS + Firefox and always refreshed from
+# upstream rather than a self-built base image.
+COPY --from=ghcr.io/techarohq/foxbridge /usr/local/bin/foxbridge /usr/local/bin/foxbridge
 
 USER firefox
 WORKDIR /home/firefox

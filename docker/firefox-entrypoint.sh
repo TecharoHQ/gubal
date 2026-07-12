@@ -35,12 +35,11 @@ SOCAT_BRIDGE="${FOXBRIDGE_SOCAT_BRIDGE:-true}"
 
 # --- Sanity: we need a real browser to drive -------------------------------------
 #
-# This image family is browser-less on its own (the foxbridge base has no Firefox);
-# fail loudly rather than let foxbridge spawn nothing.
+# Each firefox-* era image unpacks Firefox into /opt/firefox; fail loudly rather than
+# let foxbridge spawn nothing if that layer is missing or FIREFOX_BIN points elsewhere.
 if [ ! -x "${FIREFOX_BIN}" ]; then
   echo "FATAL: Firefox binary not found or not executable at '${FIREFOX_BIN}'." >&2
-  echo "       The foxbridge base image carries no browser — run a firefox-* image," >&2
-  echo "       or point FIREFOX_BIN at a mounted Firefox." >&2
+  echo "       Run a firefox-* era image, or point FIREFOX_BIN at a mounted Firefox." >&2
   exit 1
 fi
 
