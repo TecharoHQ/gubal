@@ -1,0 +1,46 @@
+# gubald image: the SmokeTestService that drives chrome-sweep.
+#
+# Two stages: a "fat" builder carrying the full Go toolchain compiles a static
+# binary, and a "thin" runtime is bare Alpine with the binary + CA certs + tini +
+# kubectl, plus the k8s/ manifests chrome-sweep reads at runtime.
+#
+# Build (from the repo root, so the whole module is in context):
+#   docker build -f docker/Dockerfile.gubald \
+#     -t ghcr.io/techarohq/gubal/gubald:latest .
+
+# ---- build stage (fat) -------------------------------------------------------
+FROM golang:1.26-alpine AS build
+
+WORKDIR /src
+
+# Resolve modules first so this layer caches unless go.mod/go.sum change.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+# Static, stripped binary — no libc, so it runs on Alpine unchanged.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -trimpath -ldflags="-s -w" -o /out/gubald ./cmd/gubald
+
+# ---- runtime stage (thin) ----------------------------------------------------
+FROM alpine:3.20
+
+# ca-certs: outbound TLS (iamd, ghcr). tini: reaps zombies. kubectl:
+# chromesweep.CopyFrame shells out to `kubectl cp` to pull frames off the PVC.
+RUN apk add --no-cache ca-certificates tini kubectl \
+ && addgroup -S -g 10002 gubald \
+ && adduser -S -u 10002 -G gubald -h /home/gubald gubald
+
+COPY --from=build /out/gubald /usr/local/bin/gubald
+
+# The smoke test reads k8s/*.yaml at runtime (see chromesweep.DefaultConfig), so
+# ship them where the default relative paths (k8s/...) resolve under WORKDIR.
+COPY k8s/ /app/k8s/
+
+USER gubald
+WORKDIR /app
+# 9080: Twirp API (also /healthz). 9081: Prometheus /metrics.
+EXPOSE 9080 9081
+
+ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/gubald"]
