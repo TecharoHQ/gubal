@@ -46,11 +46,7 @@ func (s *Server) SmokeTest(ctx context.Context, req *gubalv1.SmokeTestRequest) (
 		return nil, twirp.NewError(twirp.ResourceExhausted, "a smoke test is already running; try again later")
 	}
 
-	raw := make([]string, len(req.GetChromeVersions()))
-	for i, v := range req.GetChromeVersions() {
-		raw[i] = strconv.Itoa(int(v))
-	}
-	versions, err := chromesweep.ParseVersions(raw)
+	browsers, err := browsersFor(req)
 	if err != nil {
 		return nil, twirp.NewError(twirp.InvalidArgument, err.Error())
 	}
@@ -62,7 +58,7 @@ func (s *Server) SmokeTest(ctx context.Context, req *gubalv1.SmokeTestRequest) (
 
 	cfg := chromesweep.DefaultConfig()
 	cfg.AnubisImage = req.GetAnubisImage()
-	cfg.Versions = versions
+	cfg.Browsers = browsers
 
 	framesDir, err := os.MkdirTemp("", "smoketest-frames-")
 	if err != nil {
@@ -82,15 +78,55 @@ func (s *Server) SmokeTest(ctx context.Context, req *gubalv1.SmokeTestRequest) (
 	}
 	for _, r := range rep.Results {
 		result.Results = append(result.Results, &gubalv1.ChromeVersionResult{
-			Tag:           r.Tag,
-			Status:        sweepStatus(r.Status),
-			ChromeVersion: r.ChromeVersion,
-			ReportedUa:    r.ReportedUA,
-			Detail:        r.Detail,
+			Browser:        r.Browser,
+			Tag:            r.Tag,
+			Status:         sweepStatus(r.Status),
+			BrowserVersion: r.BrowserVersion,
+			ReportedUa:     r.ReportedUA,
+			Detail:         r.Detail,
 		})
 	}
 
 	return result, nil
+}
+
+// browsersFor builds the browser targets for a request: Chrome + Firefox presets
+// carrying the requested versions. Validation guarantees both lists are non-empty,
+// but a browser with no versions is simply omitted so this degrades safely.
+func browsersFor(req *gubalv1.SmokeTestRequest) ([]chromesweep.Browser, error) {
+	var browsers []chromesweep.Browser
+	if len(req.GetChromeVersions()) > 0 {
+		vs, err := parseInts(req.GetChromeVersions())
+		if err != nil {
+			return nil, err
+		}
+		b := chromesweep.ChromeBrowser()
+		b.Versions = vs
+		browsers = append(browsers, b)
+	}
+	if len(req.GetFirefoxVersions()) > 0 {
+		vs, err := parseInts(req.GetFirefoxVersions())
+		if err != nil {
+			return nil, err
+		}
+		b := chromesweep.FirefoxBrowser()
+		b.Versions = vs
+		browsers = append(browsers, b)
+	}
+	if len(browsers) == 0 {
+		return nil, fmt.Errorf("no versions given")
+	}
+	return browsers, nil
+}
+
+// parseInts renders int32 majors as strings and runs them through ParseVersions
+// (trim/dedupe/non-empty).
+func parseInts(vs []int32) ([]string, error) {
+	raw := make([]string, len(vs))
+	for i, v := range vs {
+		raw[i] = strconv.Itoa(int(v))
+	}
+	return chromesweep.ParseVersions(raw)
 }
 
 // sweepStatus maps a chromesweep status to its proto enum.

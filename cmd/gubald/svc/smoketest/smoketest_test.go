@@ -1,6 +1,7 @@
 package smoketest
 
 import (
+	"strings"
 	"testing"
 
 	"buf.build/go/protovalidate"
@@ -21,7 +22,7 @@ func TestSmokeTestRequestValidation(t *testing.T) {
 	}{
 		{
 			name: "valid",
-			req:  &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "ghcr.io/techarohq/anubis:latest", ChromeVersions: []int32{120, 150}},
+			req:  &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "ghcr.io/techarohq/anubis:latest", ChromeVersions: []int32{120, 150}, FirefoxVersions: []int32{140, 152}},
 		},
 		{
 			name:    "empty versions",
@@ -43,6 +44,16 @@ func TestSmokeTestRequestValidation(t *testing.T) {
 			req:     &gubalv1.SmokeTestRequest{Id: uuid.NewString(), ChromeVersions: []int32{120}},
 			wantErr: true,
 		},
+		{
+			name:    "missing firefox versions",
+			req:     &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "x", ChromeVersions: []int32{120}},
+			wantErr: true,
+		},
+		{
+			name:    "firefox version too low",
+			req:     &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "x", ChromeVersions: []int32{120}, FirefoxVersions: []int32{100}},
+			wantErr: true,
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
@@ -54,5 +65,22 @@ func TestSmokeTestRequestValidation(t *testing.T) {
 				t.Fatal("wrong validation result")
 			}
 		})
+	}
+}
+
+func TestBrowsersFor(t *testing.T) {
+	req := &gubalv1.SmokeTestRequest{ChromeVersions: []int32{120, 150}, FirefoxVersions: []int32{140, 152}}
+	bs, err := browsersFor(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bs) != 2 || bs[0].Name != "chrome" || bs[1].Name != "firefox" {
+		t.Fatalf("browsers = %+v", bs)
+	}
+	if strings.Join(bs[0].Versions, ",") != "120,150" {
+		t.Fatalf("chrome versions = %v", bs[0].Versions)
+	}
+	if strings.Join(bs[1].Versions, ",") != "140,152" {
+		t.Fatalf("firefox versions = %v", bs[1].Versions)
 	}
 }
