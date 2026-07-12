@@ -51,7 +51,7 @@ func FirefoxBrowser() Browser {
 		ServiceManifest:       "k8s/firefox/service.yaml",
 		NetworkPolicyManifest: "k8s/firefox/networkpolicy.yaml",
 		JobManifest:           "k8s/firefox/smoke-job.yaml",
-		Versions:              []string{"146", "147", "148", "149", "150", "151", "152"},
+		Versions:              []string{"124", "125", "128", "130", "135", "140", "145", "150", "151", "152"},
 	}
 }
 
