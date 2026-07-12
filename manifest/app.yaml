@@ -1,0 +1,71 @@
+# First-pass App manifest for gubald (the SmokeTestService that drives chrome-sweep).
+#
+# Runs in the `ci` namespace alongside the chrome/Anubis resources it manages, so
+# the App-generated Role (spec.role) is namespaced to `ci` and needs no
+# cross-namespace binding.
+apiVersion: x.within.website/v1
+kind: App
+metadata:
+  name: gubald
+  namespace: ci
+spec:
+  image: ghcr.io/techarohq/gubal/gubald:latest
+  autoUpdate: true
+  replicas: 1
+  # gubald binds :9080 by default (cmd/gubald -bind).
+  port: 9080
+  logLevel: info
+
+  # /healthz is served on the main port, outside the sigv4a verifier.
+  healthcheck:
+    enabled: true
+    kind: http
+    path: /healthz
+    port: 9080
+
+  # Signed Twirp API (sigv4a). Public host so CI can trigger smoke tests; the
+  # sigv4a middleware is the auth layer. Adjust/disable if it should stay internal.
+  ingress:
+    enabled: true
+    host: gubald.xeserv.us
+
+  env:
+    - name: REGION
+      value: yow
+    - name: SERVICE
+      value: gubal
+    - name: X_IAMD_URL
+      value: https://iamd.xeserv.us
+    - name: X_IAMD_REGION
+      value: yow
+    # X_IAMD_ACCESS_KEY_ID and X_IAMD_SECRET_ACCESS_KEY are gubald's own IAM
+    # credentials for calling iamd. spec.env only carries plaintext, so DO NOT
+    # put them here — inject them from a Secret out-of-band.
+
+  # RBAC the chrome-sweep run needs in this namespace (standard k8s PolicyRules):
+  # create/delete per-version chrome resources, patch Anubis's image, run the
+  # collector pod, read job-pod logs, and `pods/exec` for `kubectl cp`.
+  role:
+    enabled: true
+    rules:
+      - apiGroups: ["apps"]
+        resources: ["deployments"]
+        verbs: ["get", "create", "delete", "patch"]
+      - apiGroups: [""]
+        resources: ["services"]
+        verbs: ["get", "create", "delete"]
+      - apiGroups: ["networking.k8s.io"]
+        resources: ["networkpolicies"]
+        verbs: ["get", "create", "delete"]
+      - apiGroups: ["batch"]
+        resources: ["jobs"]
+        verbs: ["get", "create", "delete"]
+      - apiGroups: [""]
+        resources: ["pods"]
+        verbs: ["get", "list", "create", "delete"]
+      - apiGroups: [""]
+        resources: ["pods/log"]
+        verbs: ["get"]
+      - apiGroups: [""]
+        resources: ["pods/exec"]
+        verbs: ["create"]
