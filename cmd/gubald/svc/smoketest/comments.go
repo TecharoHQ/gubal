@@ -54,7 +54,7 @@ func bodyResult(success bool, report, sha, bundleURL string) string {
 	head := header + shaSuffix(sha) + "\n\n"
 	tail := ""
 	if bundleURL != "" {
-		tail = fmt.Sprintf("\n\n📦 [Download report bundle (frames + logs)](%s)", bundleURL)
+		tail = fmt.Sprintf("\n\n📦 [Download report bundle (frames + logs)](%s) — link expires in 24h", bundleURL)
 	}
 	return head + capTo(report, maxCommentBytes-len(head)-len(tail)) + tail
 }

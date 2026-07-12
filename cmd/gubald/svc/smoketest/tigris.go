@@ -4,20 +4,25 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	storage "github.com/tigrisdata/storage-go"
 )
 
-// bundleUploader stores a report bundle and returns a public URL to it.
+// bundleURLTTL is how long a presigned bundle download URL stays valid. Tigris
+// does not serve public-read objects, so the link is a time-limited presigned
+// GET rather than a permanent public URL.
+const bundleURLTTL = 24 * time.Hour
+
+// bundleUploader stores a report bundle and returns a URL to download it.
 type bundleUploader interface {
 	Upload(ctx context.Context, key string, data []byte, contentType string) (string, error)
 }
 
-// tigrisUploader uploads public-read objects to a Tigris bucket and returns their
-// permanent public URL.
+// tigrisUploader uploads objects to a Tigris bucket and returns a presigned GET
+// URL (valid for bundleURLTTL) for each, since Tigris objects aren't public.
 type tigrisUploader struct {
 	client *storage.Client
 	bucket string
@@ -37,19 +42,26 @@ func NewTigrisUploader(ctx context.Context, bucket string) (bundleUploader, erro
 	return &tigrisUploader{client: client, bucket: bucket}, nil
 }
 
-// Upload stores data at key as a public-read object and returns its public URL.
+// Upload stores data at key and returns a presigned GET URL valid for
+// bundleURLTTL (the object itself stays private).
 func (u *tigrisUploader) Upload(ctx context.Context, key string, data []byte, contentType string) (string, error) {
 	_, err := u.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(u.bucket),
 		Key:         aws.String(key),
 		Body:        bytes.NewReader(data),
 		ContentType: aws.String(contentType),
-		ACL:         types.ObjectCannedACLPublicRead,
 	})
 	if err != nil {
 		return "", fmt.Errorf("uploading %s to %s: %w", key, u.bucket, err)
 	}
-	return fmt.Sprintf("https://%s.t3.storage.dev/%s", u.bucket, key), nil
+	req, err := s3.NewPresignClient(u.client.S3()).PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(u.bucket),
+		Key:    aws.String(key),
+	}, s3.WithPresignExpires(bundleURLTTL))
+	if err != nil {
+		return "", fmt.Errorf("presigning %s in %s: %w", key, u.bucket, err)
+	}
+	return req.URL, nil
 }
 
 // noopUploader is used when no Tigris credentials are configured: uploads are
