@@ -12,6 +12,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const collectorPodName = "chrome-sweep-collector"
@@ -45,13 +46,16 @@ func loadBaseManifests(b Browser, namespace string) (baseManifests, error) {
 	return baseManifests{deployment: dep, service: svc, netpol: np, job: job}, nil
 }
 
-// Run sweeps every browser in cfg.Browsers against one in-cluster Anubis setup:
-// Anubis is re-imaged (if overridden) and the frame collector is created ONCE,
-// then each browser's versions are tested in a bounded pool of cfg.Parallelism.
-// Captured frames are copied into framesDir. A failure on one version is recorded
-// and does not stop the others. Results are returned browser-then-version ordered.
+// Run sweeps every browser in cfg.Browsers against every policy in cfg.Policies.
+// Anubis is a shared singleton, so policies run SEQUENTIALLY: for each policy the
+// ruleset is written to a ConfigMap, wired into the live Anubis Deployment
+// (POLICY_FNAME + mount), rolled out, then the browser/version matrix runs against
+// it in a bounded pool of cfg.Parallelism. Every Result is tagged with its policy.
+// The frame collector is created once; the original Anubis pod template is restored
+// at the end. A failure on one version (or one whole policy) is recorded and does
+// not stop the rest.
 func Run(ctx context.Context, c *Cluster, cfg Config, framesDir string) (Report, error) {
-	anubisImage, restoreAnubis, err := prepareAnubis(ctx, c, cfg)
+	anubisImage, anubisDeployment, restoreAnubis, err := prepareAnubis(ctx, c, cfg)
 	if err != nil {
 		return Report{}, err
 	}
@@ -66,16 +70,88 @@ func Run(ctx context.Context, c *Cluster, cfg Config, framesDir string) (Report,
 		}
 	}()
 
+	policies := cfg.Policies
+	if len(policies) == 0 {
+		// No embedded policies: sweep once against whatever policy Anubis is already
+		// running, tagging results with an empty policy name.
+		policies = []Policy{{Name: ""}}
+	}
+
+	var results []Result
+	for _, pol := range policies {
+		if pol.Name != "" {
+			if err := applyPolicy(ctx, c, cfg, anubisDeployment, pol); err != nil {
+				slog.Warn("applying anubis policy failed; marking its versions errored",
+					"policy", pol.Name, "err", err)
+				results = append(results, policyErrorResults(cfg, pol.Name, err)...)
+				continue
+			}
+		}
+		results = append(results, sweepBrowsers(ctx, c, cfg, framesDir, pol.Name)...)
+	}
+	return Report{AnubisImage: anubisImage, Results: results}, nil
+}
+
+// applyPolicy renders pol into a per-policy ConfigMap, wires it into the Anubis
+// Deployment, and waits for the resulting rollout so subsequent browser requests
+// hit the new ruleset.
+func applyPolicy(ctx context.Context, c *Cluster, cfg Config, deployment string, pol Policy) error {
+	cmName := "anubis-policy-" + pol.Name
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: cmName, Namespace: cfg.Namespace},
+		Data:       map[string]string{anubisPolicyFileName: string(pol.Content)},
+	}
+	if err := c.CreateOrReplaceConfigMap(ctx, cm); err != nil {
+		return fmt.Errorf("policy configmap: %w", err)
+	}
+	if err := c.SetAnubisPolicy(ctx, deployment, cfg.AnubisContainer, cmName); err != nil {
+		return fmt.Errorf("wiring policy into anubis: %w", err)
+	}
+	if err := c.WaitDeploymentReady(ctx, deployment, cfg.ReadyTimeout); err != nil {
+		return fmt.Errorf("anubis rollout for policy %s: %w", pol.Name, err)
+	}
+	slog.Info("applied anubis policy", "policy", pol.Name, "configmap", cmName)
+	return nil
+}
+
+// policyErrorResults synthesizes an errored Result for every browser/version under
+// a policy that could not be applied (e.g. Anubis rejected the ruleset and never
+// became ready), so a bad policy shows as a clean per-policy failure in the report.
+func policyErrorResults(cfg Config, policy string, cause error) []Result {
+	var out []Result
+	for _, b := range cfg.Browsers {
+		for _, tag := range b.Versions {
+			out = append(out, Result{
+				Policy:  policy,
+				Browser: b.Name,
+				Tag:     tag,
+				Status:  StatusError,
+				Detail:  cause.Error(),
+			})
+		}
+	}
+	return out
+}
+
+// sweepBrowsers runs the full browser/version matrix against the currently-live
+// Anubis policy, tagging each Result with policy. Versions run in a bounded pool;
+// a manifest-load failure for one browser errors only that browser's versions.
+func sweepBrowsers(ctx context.Context, c *Cluster, cfg Config, framesDir, policy string) []Result {
 	parallelism := cfg.Parallelism
 	if parallelism < 1 {
 		parallelism = 1
 	}
-
 	var results []Result
 	for _, b := range cfg.Browsers {
 		base, err := loadBaseManifests(b, cfg.Namespace)
 		if err != nil {
-			return Report{}, err
+			for _, tag := range b.Versions {
+				results = append(results, Result{
+					Policy: policy, Browser: b.Name, Tag: tag,
+					Status: StatusError, Detail: err.Error(),
+				})
+			}
+			continue
 		}
 		brResults := make([]Result, len(b.Versions))
 		sem := make(chan struct{}, parallelism)
@@ -86,24 +162,25 @@ func Run(ctx context.Context, c *Cluster, cfg Config, framesDir string) (Report,
 			go func(i int, tag string) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				brResults[i] = sweepOne(ctx, c, cfg, b, base, tag, framesDir)
+				brResults[i] = sweepOne(ctx, c, cfg, b, base, tag, framesDir, policy)
 			}(i, tag)
 		}
 		wg.Wait()
 		results = append(results, brResults...)
 	}
-	return Report{AnubisImage: anubisImage, Results: results}, nil
+	return results
 }
 
-// prepareAnubis resolves the Anubis image the sweep runs against. The default ref
-// is read from the Anubis manifest (never hardcoded); if cfg.AnubisImage is set it
-// overrides that and the live Anubis Deployment is re-imaged for the run, with the
-// returned restore func putting the original image back afterward.
-func prepareAnubis(ctx context.Context, c *Cluster, cfg Config) (image string, restore func(), err error) {
+// prepareAnubis resolves the Anubis image the sweep runs against and snapshots the
+// live Anubis pod template so any per-policy edits (and an optional image override)
+// can be reverted afterward. It returns the resolved image, the Anubis Deployment
+// name, and a restore func. If cfg.AnubisImage is set, the live Deployment is
+// re-imaged for the run.
+func prepareAnubis(ctx context.Context, c *Cluster, cfg Config) (image, deployment string, restore func(), err error) {
 	noop := func() {}
 	dep, err := loadDeployment(cfg.AnubisManifest, cfg.Namespace)
 	if err != nil {
-		return "", noop, fmt.Errorf("loading anubis manifest: %w", err)
+		return "", "", noop, fmt.Errorf("loading anubis manifest: %w", err)
 	}
 	manifestImage := ""
 	for _, ct := range dep.Spec.Template.Spec.Containers {
@@ -111,37 +188,43 @@ func prepareAnubis(ctx context.Context, c *Cluster, cfg Config) (image string, r
 			manifestImage = ct.Image
 		}
 	}
-	if cfg.AnubisImage == "" {
-		// No override: report the manifest's declared image; leave the cluster alone.
-		return manifestImage, noop, nil
-	}
-	// Override: re-image the live Anubis Deployment and restore it afterward.
-	original, err := c.ContainerImage(ctx, dep.Name, cfg.AnubisContainer)
+	// Snapshot the live pod template; the restore reverts image + policy wiring in one shot.
+	snapshot, err := c.SnapshotPodTemplate(ctx, dep.Name)
 	if err != nil {
-		return "", noop, fmt.Errorf("reading current anubis image: %w", err)
-	}
-	if err := c.SetImage(ctx, dep.Name, cfg.AnubisContainer, cfg.AnubisImage); err != nil {
-		return "", noop, fmt.Errorf("setting anubis image: %w", err)
+		return "", "", noop, fmt.Errorf("snapshotting anubis: %w", err)
 	}
 	restore = func() {
-		if rerr := c.SetImage(context.Background(), dep.Name, cfg.AnubisContainer, original); rerr != nil {
-			slog.Warn("restoring anubis image failed", "err", rerr, "image", original)
+		if rerr := c.RestorePodTemplate(context.Background(), dep.Name, snapshot); rerr != nil {
+			slog.Warn("restoring anubis pod template failed", "err", rerr)
+			return
+		}
+		if rerr := c.WaitDeploymentReady(context.Background(), dep.Name, cfg.ReadyTimeout); rerr != nil {
+			slog.Warn("waiting for anubis restore rollout failed", "err", rerr)
 		}
 	}
-	slog.Info("re-imaged anubis for the sweep", "deployment", dep.Name, "image", cfg.AnubisImage)
-	if err := c.WaitDeploymentReady(ctx, dep.Name, cfg.ReadyTimeout); err != nil {
-		restore()
-		return "", noop, fmt.Errorf("anubis rollout: %w", err)
+
+	image = manifestImage
+	if cfg.AnubisImage != "" {
+		if err := c.SetImage(ctx, dep.Name, cfg.AnubisContainer, cfg.AnubisImage); err != nil {
+			restore()
+			return "", "", noop, fmt.Errorf("setting anubis image: %w", err)
+		}
+		slog.Info("re-imaged anubis for the sweep", "deployment", dep.Name, "image", cfg.AnubisImage)
+		if err := c.WaitDeploymentReady(ctx, dep.Name, cfg.ReadyTimeout); err != nil {
+			restore()
+			return "", "", noop, fmt.Errorf("anubis rollout: %w", err)
+		}
+		image = cfg.AnubisImage
 	}
-	return cfg.AnubisImage, restore, nil
+	return image, dep.Name, restore, nil
 }
 
-func sweepOne(ctx context.Context, c *Cluster, cfg Config, b Browser, base baseManifests, tag, framesDir string) Result {
+func sweepOne(ctx context.Context, c *Cluster, cfg Config, b Browser, base baseManifests, tag, framesDir, policy string) Result {
 	name := versionedName(b.Deployment, tag) // e.g. chrome-150 / firefox-152
 	jobName := versionedName(b.JobName, tag) // e.g. chrome-smoke-150
 	image := fmt.Sprintf("%s:%s", b.ImageRepo, tag)
-	res := Result{Browser: b.Name, Tag: tag}
-	log := slog.With("browser", b.Name, "tag", tag, "image", image, "name", name)
+	res := Result{Policy: policy, Browser: b.Name, Tag: tag}
+	log := slog.With("browser", b.Name, "tag", tag, "image", image, "name", name, "policy", policy)
 	log.Info("testing version")
 
 	// Tear this version's resources down when done, even on early return. Uses a
@@ -197,7 +280,7 @@ func sweepOne(ctx context.Context, c *Cluster, cfg Config, b Browser, base baseM
 	if bullyErr == nil {
 		if remote, perr := capturedFramePath(bullyLogs); perr == nil {
 			res.BrowserVersion = versionFromFrame(remote)
-			local := filepath.Join(framesDir, localFrameName(b.Name, tag))
+			local := filepath.Join(framesDir, localFrameName(policy, b.Name, tag))
 			if cerr := c.CopyFrame(ctx, collectorPodName, remote, local); cerr == nil {
 				res.FramePath = local
 			} else {
@@ -232,10 +315,14 @@ func sweepOne(ctx context.Context, c *Cluster, cfg Config, b Browser, base baseM
 	return res
 }
 
-// localFrameName is the on-disk name for a captured frame, namespaced by browser
-// so same-numbered tags across browsers (chrome 130 and firefox 130) don't collide.
-func localFrameName(browser, tag string) string {
-	return browser + "-" + tag + ".png"
+// localFrameName is the on-disk name for a captured frame, namespaced by policy and
+// browser so nothing collides across the policy × browser × version matrix. An empty
+// policy (live-policy fallback) omits the prefix.
+func localFrameName(policy, browser, tag string) string {
+	if policy == "" {
+		return browser + "-" + tag + ".png"
+	}
+	return policy + "-" + browser + "-" + tag + ".png"
 }
 
 // versionFromFrame pulls the Chrome version out of a frame path like
