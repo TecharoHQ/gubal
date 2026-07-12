@@ -168,8 +168,12 @@ func (s *Server) SubmitSmokeTest(ctx context.Context, req *gubalv1.SubmitSmokeTe
 		} else {
 			body = bodyResult(result.GetSuccess(), result.GetReport(), sha)
 		}
-		if err := s.gh.Comment(bg, repo, pr, body); err != nil {
-			slog.ErrorContext(bg, "posting result comment failed", "repo", repo, "pr", pr, "err", err)
+		// Post the closure comment on a fresh context: bg may already be expired
+		// if the sweep ran to jobDeadline, and the PR must still get a result.
+		postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer postCancel()
+		if err := s.gh.Comment(postCtx, repo, pr, body); err != nil {
+			slog.ErrorContext(postCtx, "posting result comment failed", "repo", repo, "pr", pr, "err", err)
 		}
 	}()
 

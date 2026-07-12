@@ -95,6 +95,9 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("building github commenter: %w", err)
 	}
+	if *githubToken == "" {
+		lg.Warn("no -github-token configured; async smoke-test PR comments will not be posted")
+	}
 	var allowed []string
 	for _, r := range strings.Split(*githubRepos, ",") {
 		if r = strings.TrimSpace(r); r != "" {

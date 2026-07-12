@@ -16,7 +16,11 @@ type githubCommenter struct {
 
 // NewGitHubCommenter builds a commenter authenticated with the given token.
 func NewGitHubCommenter(token string) (*githubCommenter, error) {
-	client, err := github.NewClient(github.WithAuthToken(token))
+	var opts []github.ClientOptionsFunc
+	if token != "" {
+		opts = append(opts, github.WithAuthToken(token))
+	}
+	client, err := github.NewClient(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("building github client: %w", err)
 	}

@@ -20,3 +20,14 @@ func TestSplitRepo(t *testing.T) {
 		t.Fatal("expected error for repo with two slashes")
 	}
 }
+
+func TestNewGitHubCommenterEmptyToken(t *testing.T) {
+	t.Parallel()
+	c, err := NewGitHubCommenter("")
+	if err != nil {
+		t.Fatalf("empty token should not error: %v", err)
+	}
+	if c == nil {
+		t.Fatal("expected a non-nil commenter")
+	}
+}
