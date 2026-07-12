@@ -47,3 +47,30 @@ func TestBodyRunError(t *testing.T) {
 		t.Fatalf("run-error body wrong: %q", b)
 	}
 }
+
+func TestCapBody(t *testing.T) {
+	t.Parallel()
+	small := "hello"
+	if capBody(small) != small {
+		t.Fatal("small body should pass through unchanged")
+	}
+	big := strings.Repeat("x", maxCommentBytes+1000)
+	got := capBody(big)
+	if len(got) > maxCommentBytes {
+		t.Fatalf("capped body still too long: %d", len(got))
+	}
+	if !strings.Contains(got, "truncated") {
+		t.Fatal("capped body should carry the truncation note")
+	}
+}
+
+func TestBodyResultTruncatesLargeReport(t *testing.T) {
+	t.Parallel()
+	body := bodyResult(true, strings.Repeat("R", maxCommentBytes+5000), "sha1")
+	if len(body) > maxCommentBytes {
+		t.Fatalf("result body over limit: %d", len(body))
+	}
+	if !strings.Contains(body, "truncated") {
+		t.Fatal("expected truncation note")
+	}
+}
