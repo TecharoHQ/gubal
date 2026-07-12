@@ -1,0 +1,78 @@
+# One-shot proving Job for Firefox: connect to the Firefox CDP Service, print
+# /json/version, assert the reported User-Agent looks like real Firefox, then drive
+# it through Anubis with chrome-bully. Mirror of k8s/smoke-job.yaml.
+#
+# Carries role=chrome-controller so the firefox NetworkPolicy lets it reach 9222.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: firefox-smoke
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels: { role: chrome-controller }
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: smoke
+          image: curlimages/curl:8.8.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              # DevTools rejects DNS-name Host headers (anti DNS-rebinding), so we
+              # reach the Service by name but send an accepted Host header.
+              echo "waiting for firefox:9222 ..."
+              for i in $(seq 1 30); do
+                if curl -fsS -H "Host: localhost:9222" \
+                     "http://firefox:9222/json/version" -o /tmp/v.json; then break; fi
+                sleep 2
+              done
+              cat /tmp/v.json; echo
+              ua=$(sed -n 's/.*"User-Agent": *"\([^"]*\)".*/\1/p' /tmp/v.json)
+              echo "User-Agent: ${ua}"
+              case "${ua}" in
+                *Firefox/*) echo "PASS: driveable Firefox UA" ;;
+                *)          echo "FAIL: unexpected/empty User-Agent"; exit 1 ;;
+              esac
+
+              # Anubis is up and serving its challenge.
+              echo "checking Anubis at anubis-ci.alrest.cetacean.club ..."
+              code=$(curl -sS -o /tmp/anubis.html -H "User-Agent: Mozilla" -w '%{http_code}' \
+                       https://anubis-ci.alrest.cetacean.club/ || echo 000)
+              echo "Anubis HTTP ${code}"
+              [ "${code}" = "200" ] || { echo "FAIL: Anubis not 200"; exit 1; }
+              grep -qi anubis /tmp/anubis.html \
+                && echo "PASS: Anubis is serving its challenge" \
+                || { echo "FAIL: response is not Anubis"; exit 1; }
+        # Controller: drives Firefox over CDP (Host "localhost" satisfies the
+        # DNS-rebind check) through Anubis, sets a marker header, waits for it to
+        # echo back, then screenshots. Frames land on the shared PVC.
+        - name: chrome-bully
+          image: ghcr.io/techarohq/gubal/chrome-bully:latest
+          imagePullPolicy: Always
+          args:
+            - -cdp-url=http://firefox:9222
+            - -target-url=https://anubis-ci.alrest.cetacean.club
+            - "-header=X-Firefox-Bully: firefox-bully-roundtrip-ok"
+            - -expect-text=firefox-bully-roundtrip-ok
+            - -capture-timeout=90s
+            - -out-dir=/data
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 997
+            runAsGroup: 993
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits: { cpu: "500m", memory: "256Mi" }
+          volumeMounts:
+            - { name: bully-data, mountPath: /data }
+      volumes:
+        - name: bully-data
+          persistentVolumeClaim:
+            claimName: chrome-bully-data

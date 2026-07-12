@@ -1,0 +1,61 @@
+# Long-running headless Firefox as a CDP server (chrome-bully/chromedp compatible),
+# isolated with Kata Containers. Mirror of k8s/deployment.yaml with the image and
+# names swapped to firefox. Swap the image tag to prove a different Firefox version.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: firefox
+  labels: { app: firefox }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: firefox }
+  template:
+    metadata:
+      labels: { app: firefox }
+    spec:
+      # Kata is the real trust boundary here (a VM per pod). Ancient browsers' own
+      # sandboxes have unpatched escape CVEs, so we lean on Kata instead.
+      runtimeClassName: kata
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+        # Own the chrome-bully PVC as gid 993 so its non-root user can write frames.
+        fsGroup: 993
+      containers:
+        - name: firefox
+          image: firefox
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: cdp
+              containerPort: 9222
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: "500m", memory: "512Mi" }
+            limits: { cpu: "2", memory: "2Gi" }
+          # DevTools rejects DNS-name Host headers; force an accepted one.
+          readinessProbe:
+            httpGet:
+              path: /json/version
+              port: cdp
+              httpHeaders: [{ name: Host, value: "localhost:9222" }]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /json/version
+              port: cdp
+              httpHeaders: [{ name: Host, value: "localhost:9222" }]
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          volumeMounts:
+            - { name: dshm, mountPath: /dev/shm }
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi

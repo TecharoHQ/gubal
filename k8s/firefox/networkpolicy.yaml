@@ -1,0 +1,29 @@
+# CDP on port 9222 is unauthenticated *full control* of the browser. Lock it down so
+# only the controller pod can reach it, and so Firefox can't phone home from the pod.
+# Reuses the role=chrome-controller label (the smoke Job carries it) so the base
+# Chrome manifests stay untouched.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: firefox-lockdown
+spec:
+  podSelector:
+    matchLabels: { app: firefox }
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { role: chrome-controller }
+      ports:
+        - { protocol: TCP, port: 9222 }
+  egress:
+    - to: []
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - podSelector:
+            matchLabels: { app: anubis }
+      ports:
+        - { protocol: TCP, port: 8443 }
+        - { protocol: TCP, port: 443 }

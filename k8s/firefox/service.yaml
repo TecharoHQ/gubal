@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: firefox
+  labels: { app: firefox }
+spec:
+  selector: { app: firefox }
+  ports:
+    - name: cdp
+      port: 9222
+      targetPort: cdp
