@@ -26,7 +26,7 @@ func TestLoadPolicies(t *testing.T) {
 			t.Fatalf("policies not sorted: %q before %q", got[i-1].Name, p.Name)
 		}
 	}
-	for _, want := range []string{"default", "hard"} {
+	for _, want := range []string{"default-config", "fast"} {
 		if !names[want] {
 			t.Fatalf("missing policy %q; have %v", want, names)
 		}

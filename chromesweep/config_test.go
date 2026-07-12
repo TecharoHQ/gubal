@@ -54,8 +54,8 @@ func TestDefaultConfigLoadsPolicies(t *testing.T) {
 	for _, p := range cfg.Policies {
 		seen[p.Name] = true
 	}
-	if !seen["default"] {
-		t.Fatalf(`DefaultConfig missing the "default" policy; have %v`, seen)
+	if !seen["default-config"] {
+		t.Fatalf(`DefaultConfig missing the "default-config" policy; have %v`, seen)
 	}
 }
 
