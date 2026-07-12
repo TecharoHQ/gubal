@@ -38,3 +38,22 @@ func TestParseVersions(t *testing.T) {
 		})
 	}
 }
+
+func TestWantsAsync(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		repo string
+		pr   int
+		want bool
+	}{
+		{"TecharoHQ/anubis", 1741, true},
+		{"", 1741, false},
+		{"TecharoHQ/anubis", 0, false},
+		{"", 0, false},
+	}
+	for _, c := range cases {
+		if got := wantsAsync(c.repo, c.pr); got != c.want {
+			t.Fatalf("wantsAsync(%q,%d) = %v, want %v", c.repo, c.pr, got, c.want)
+		}
+	}
+}

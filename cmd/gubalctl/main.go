@@ -33,6 +33,10 @@ var (
 	chromeVersions  = flag.String("chrome-versions", "75,80,85,90,95,100,105,110,115,120,125,130,135,140,145,150", "comma-separated Chrome major versions to test")
 	firefoxVersions = flag.String("firefox-versions", "146,147,148,149,150,151,152", "comma-separated Firefox major versions to test")
 	id              = flag.String("id", "", "request id (UUID); generated when empty")
+
+	githubRepo = flag.String("github-repo", "", "owner/repo of the PR to post results to (env: GITHUB_REPO); enables async mode with -pr-number")
+	prNumber   = flag.Int("pr-number", 0, "PR number to post results to (env: PR_NUMBER)")
+	commitSHA  = flag.String("commit-sha", "", "commit SHA under test, shown in the report (env: GITHUB_SHA)")
 )
 
 func main() {
@@ -83,6 +87,28 @@ func run(ctx context.Context) error {
 
 	client := gubalv1.NewSmokeTestServiceProtobufClient(*baseURL, &http.Client{Transport: rt})
 
+	if wantsAsync(*githubRepo, *prNumber) {
+		slog.InfoContext(ctx, "submitting async smoke test", "url", *baseURL, "id", reqID, "repo", *githubRepo, "pr", *prNumber)
+		resp, err := client.SubmitSmokeTest(ctx, &gubalv1.SubmitSmokeTestRequest{
+			Test: &gubalv1.SmokeTestRequest{
+				Id:              reqID,
+				AnubisImage:     *anubisImage,
+				ChromeVersions:  chromeVs,
+				FirefoxVersions: firefoxVs,
+			},
+			Github: &gubalv1.GitHubTarget{
+				Repo:      *githubRepo,
+				PrNumber:  int32(*prNumber),
+				CommitSha: *commitSHA,
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("submitting smoke test: %w", err)
+		}
+		slog.InfoContext(ctx, "smoke test accepted; results will be posted to the PR", "id", resp.GetId())
+		return nil
+	}
+
 	slog.InfoContext(ctx, "submitting smoke test", "url", *baseURL, "id", reqID, "anubis_image", *anubisImage, "chrome_versions", chromeVs, "firefox_versions", firefoxVs)
 	res, err := client.SmokeTest(ctx, &gubalv1.SmokeTestRequest{
 		Id:              reqID,
@@ -99,6 +125,12 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("smoke test reported failure; see report above")
 	}
 	return nil
+}
+
+// wantsAsync reports whether the caller supplied enough to post to a PR thread,
+// in which case gubalctl submits asynchronously instead of blocking on a sweep.
+func wantsAsync(githubRepo string, prNumber int) bool {
+	return githubRepo != "" && prNumber > 0
 }
 
 // parseVersions turns a comma-separated list of majors into int32s.
