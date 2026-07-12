@@ -207,17 +207,18 @@ func (x *SmokeTestResult) GetResults() []*ChromeVersionResult {
 }
 
 // ChromeVersionResult mirrors chromesweep.Result: the outcome of testing one
-// Chrome image tag. The captured screenshot is not carried here — frames are
+// browser image tag. The captured screenshot is not carried here — frames are
 // uploaded to object storage separately.
 type ChromeVersionResult struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Tag           string                 `protobuf:"bytes,1,opt,name=tag,proto3" json:"tag,omitempty"`
-	Status        SweepStatus            `protobuf:"varint,2,opt,name=status,proto3,enum=techaro.lol.gubal.v1.SweepStatus" json:"status,omitempty"`
-	ChromeVersion string                 `protobuf:"bytes,3,opt,name=chrome_version,json=chromeVersion,proto3" json:"chrome_version,omitempty"`
-	ReportedUa    string                 `protobuf:"bytes,4,opt,name=reported_ua,json=reportedUa,proto3" json:"reported_ua,omitempty"`
-	Detail        string                 `protobuf:"bytes,5,opt,name=detail,proto3" json:"detail,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Tag            string                 `protobuf:"bytes,1,opt,name=tag,proto3" json:"tag,omitempty"`
+	Status         SweepStatus            `protobuf:"varint,2,opt,name=status,proto3,enum=techaro.lol.gubal.v1.SweepStatus" json:"status,omitempty"`
+	BrowserVersion string                 `protobuf:"bytes,3,opt,name=browser_version,json=browserVersion,proto3" json:"browser_version,omitempty"`
+	ReportedUa     string                 `protobuf:"bytes,4,opt,name=reported_ua,json=reportedUa,proto3" json:"reported_ua,omitempty"`
+	Detail         string                 `protobuf:"bytes,5,opt,name=detail,proto3" json:"detail,omitempty"`
+	Browser        string                 `protobuf:"bytes,6,opt,name=browser,proto3" json:"browser,omitempty"` // "chrome" / "firefox"
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ChromeVersionResult) Reset() {
@@ -264,9 +265,9 @@ func (x *ChromeVersionResult) GetStatus() SweepStatus {
 	return SweepStatus_SWEEP_STATUS_UNSPECIFIED
 }
 
-func (x *ChromeVersionResult) GetChromeVersion() string {
+func (x *ChromeVersionResult) GetBrowserVersion() string {
 	if x != nil {
-		return x.ChromeVersion
+		return x.BrowserVersion
 	}
 	return ""
 }
@@ -285,6 +286,13 @@ func (x *ChromeVersionResult) GetDetail() string {
 	return ""
 }
 
+func (x *ChromeVersionResult) GetBrowser() string {
+	if x != nil {
+		return x.Browser
+	}
+	return ""
+}
+
 var File_techaro_lol_gubal_v1_gubal_proto protoreflect.FileDescriptor
 
 const file_techaro_lol_gubal_v1_gubal_proto_rawDesc = "" +
@@ -298,14 +306,15 @@ const file_techaro_lol_gubal_v1_gubal_proto_rawDesc = "" +
 	"\x0fSmokeTestResult\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x16\n" +
 	"\x06report\x18\x02 \x01(\tR\x06report\x12C\n" +
-	"\aresults\x18\x03 \x03(\v2).techaro.lol.gubal.v1.ChromeVersionResultR\aresults\"\xc2\x01\n" +
+	"\aresults\x18\x03 \x03(\v2).techaro.lol.gubal.v1.ChromeVersionResultR\aresults\"\xde\x01\n" +
 	"\x13ChromeVersionResult\x12\x10\n" +
 	"\x03tag\x18\x01 \x01(\tR\x03tag\x129\n" +
-	"\x06status\x18\x02 \x01(\x0e2!.techaro.lol.gubal.v1.SweepStatusR\x06status\x12%\n" +
-	"\x0echrome_version\x18\x03 \x01(\tR\rchromeVersion\x12\x1f\n" +
+	"\x06status\x18\x02 \x01(\x0e2!.techaro.lol.gubal.v1.SweepStatusR\x06status\x12'\n" +
+	"\x0fbrowser_version\x18\x03 \x01(\tR\x0ebrowserVersion\x12\x1f\n" +
 	"\vreported_ua\x18\x04 \x01(\tR\n" +
 	"reportedUa\x12\x16\n" +
-	"\x06detail\x18\x05 \x01(\tR\x06detail*\x8d\x01\n" +
+	"\x06detail\x18\x05 \x01(\tR\x06detail\x12\x18\n" +
+	"\abrowser\x18\x06 \x01(\tR\abrowser*\x8d\x01\n" +
 	"\vSweepStatus\x12\x1c\n" +
 	"\x18SWEEP_STATUS_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11SWEEP_STATUS_PASS\x10\x01\x12\x15\n" +

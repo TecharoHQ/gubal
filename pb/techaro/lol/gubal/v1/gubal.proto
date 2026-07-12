@@ -31,14 +31,15 @@ message SmokeTestResult {
 }
 
 // ChromeVersionResult mirrors chromesweep.Result: the outcome of testing one
-// Chrome image tag. The captured screenshot is not carried here — frames are
+// browser image tag. The captured screenshot is not carried here — frames are
 // uploaded to object storage separately.
 message ChromeVersionResult {
   string tag = 1;
   SweepStatus status = 2;
-  string chrome_version = 3;
+  string browser_version = 3;
   string reported_ua = 4;
   string detail = 5;
+  string browser = 6; // "chrome" / "firefox"
 }
 
 enum SweepStatus {
