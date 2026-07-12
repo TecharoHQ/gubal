@@ -98,15 +98,33 @@ func RenderMarkdown(rep Report) string {
 	return b.String()
 }
 
+// failureLogTailLines is how many trailing lines of each container log are embedded
+// in the report. The full log always lives in the bundle under logs/.
+const failureLogTailLines = 5
+
 // writeFailureLogs renders a result's captured container logs inside a collapsed
 // <details> block, one <pre> per container, HTML-escaped so log content can't
-// break the surrounding markup.
+// break the surrounding markup. Only the last failureLogTailLines lines of each
+// log are shown; the full logs are in the bundle.
 func writeFailureLogs(b *strings.Builder, r Result) {
-	fmt.Fprintf(b, "<details><summary>%s %s (%s) — logs</summary>\n\n", titleCase(r.Browser), r.Tag, r.Status)
+	fmt.Fprintf(b, "<details><summary>%s %s (%s) — logs (last %d lines each; full logs in bundle)</summary>\n\n",
+		titleCase(r.Browser), r.Tag, r.Status, failureLogTailLines)
 	for _, lg := range r.Logs {
-		fmt.Fprintf(b, "<b>%s</b>\n<pre>%s</pre>\n\n", html.EscapeString(lg.Container), html.EscapeString(lg.Content))
+		fmt.Fprintf(b, "<b>%s</b>\n<pre>%s</pre>\n\n",
+			html.EscapeString(lg.Container), html.EscapeString(lastLines(lg.Content, failureLogTailLines)))
 	}
 	b.WriteString("</details>\n\n")
+}
+
+// lastLines returns the last n lines of s. A single trailing newline is ignored
+// (it does not count as a blank final line). If s has n or fewer lines it is
+// returned with only that trailing newline trimmed.
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // titleCase upper-cases the first byte of s ("chrome" -> "Chrome").

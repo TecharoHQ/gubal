@@ -35,8 +35,9 @@ func TestRenderMarkdownEmbedsFailureLogs(t *testing.T) {
 	md := RenderMarkdown(Report{
 		Results: []Result{
 			{Browser: "firefox", Tag: "152", Status: StatusFail, Detail: "smoke job failed", Logs: []LogCapture{
-				{Container: "firefox", Content: "bidi client closed <-32000>"},
-				{Container: "chrome-bully", Content: "fatal: loading url"},
+				// 7 lines; only the last 5 (l3..l7) should be embedded.
+				{Container: "firefox", Content: "l1\nl2\nl3\nl4\nl5\nl6\nl7\n"},
+				{Container: "chrome-bully", Content: "bidi client closed <-32000>"},
 			}},
 			{Browser: "firefox", Tag: "140", Status: StatusPass, Logs: []LogCapture{
 				{Container: "firefox", Content: "should-not-appear-passed"},
@@ -44,14 +45,21 @@ func TestRenderMarkdownEmbedsFailureLogs(t *testing.T) {
 		},
 	})
 	for _, want := range []string{
-		"<details><summary>Firefox 152 (fail) — logs</summary>",
+		"<details><summary>Firefox 152 (fail) — logs (last 5 lines each; full logs in bundle)</summary>",
 		"<b>firefox</b>",
 		"<b>chrome-bully</b>",
+		"l3\nl4\nl5\nl6\nl7",                // last 5 lines only
 		"bidi client closed &lt;-32000&gt;", // HTML-escaped
 		"</details>",
 	} {
 		if !strings.Contains(md, want) {
 			t.Fatalf("markdown missing %q:\n%s", want, md)
+		}
+	}
+	// The trimmed-off head lines must NOT appear.
+	for _, gone := range []string{"l1", "l2"} {
+		if strings.Contains(md, gone) {
+			t.Fatalf("line %q should have been trimmed to the last 5:\n%s", gone, md)
 		}
 	}
 	// A passing run's logs must NOT be embedded.
