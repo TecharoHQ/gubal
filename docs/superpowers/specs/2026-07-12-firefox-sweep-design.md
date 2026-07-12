@@ -64,8 +64,14 @@ fields (`Deployment`, `Container`, `ImageRepo`, `JobName`, the four manifest
 paths, `Versions`) move **off** `Config` onto `Browser`.
 
 `DefaultConfig()` returns the run-wide defaults with
-`Browsers: []Browser{ChromeBrowser()}`, so a Chrome-only run stays the natural
-default. Callers set `Browsers` (and each browser's `Versions`).
+`Browsers: []Browser{ChromeBrowser(), FirefoxBrowser()}`, so the natural default
+sweeps both browsers. Callers override `Browsers` (and each browser's `Versions`).
+
+**Default version lists** live on the presets, so a no-flags CLI run and any
+`DefaultConfig` consumer sweep sensible sets:
+
+- `ChromeBrowser().Versions = 75,80,85,90,95,100,105,110,115,120,125,130,135,140,145,150`
+- `FirefoxBrowser().Versions = 129,135,140,145,150,152`
 
 ### 2. `Run` sets up shared infra once, then sweeps each browser
 
@@ -91,6 +97,13 @@ its browser, preserving browser-then-version order.
 `BrowserVersion` (it always held the browser-detected version; the name was
 Chrome-specific). Proto field `chrome_version` → `browser_version`, **keeping
 field number 3** so the change is wire-compatible.
+
+**Request validation stays strict.** A smoke-test request must include **both**
+`chrome_versions` and `firefox_versions` (`repeated.min_items = 1` on each, as
+committed). We do *not* relax this. The current failure is a stale test: the
+`valid` case in `smoketest_test.go` omits `firefox_versions` and so trips
+`min_items`. Fix the test (add Firefox versions to `valid`; add Firefox-specific
+cases), not the proto rule. `main` is red on this today.
 
 `RenderMarkdown` groups results by browser in first-seen order and emits one
 section per browser:
@@ -152,16 +165,17 @@ unaffected.
 ### 5. Callers
 
 **gubald** (`cmd/gubald/svc/smoketest`): build the run-wide `cfg`, set
-`AnubisImage`, then assemble `cfg.Browsers`:
+`AnubisImage`, then assemble `cfg.Browsers` from the request — `ChromeBrowser()`
+with the request's `chrome_versions` and `FirefoxBrowser()` with its
+`firefox_versions`. Validation guarantees both are present, but the assembly
+appends whichever are non-empty so it degrades safely. One `Run`. Map each
+`Result` to a proto result, adding a `browser` field (proto field 6 on the
+result message) so the flat `results` list is disambiguable; `browser_version`
+(field 3) carries the detected version.
 
-- if `req.ChromeVersions` non-empty → `b := ChromeBrowser(); b.Versions = parse(...)`
-- if `req.FirefoxVersions` non-empty → `b := FirefoxBrowser(); b.Versions = parse(...)`
-
-One `Run`. Map each `Result` to a proto result, adding a `browser` field
-(proto field 6 on the result message) so the flat `results` list is
-disambiguable; `browser_version` (field 3) carries the detected version.
-protovalidate on the request is unchanged (both repeated fields already have
-rules).
+**gubalctl** (`cmd/gubalctl`): add a `-firefox-versions` flag mirroring
+`-chrome-versions`, defaulted to the Firefox list above (and default
+`-chrome-versions` to the Chrome list). Parse both and send them in the request.
 
 **chrome-sweep CLI** (`cmd/chrome-sweep`): replace the positional-versions +
 per-browser override flags with:
@@ -169,7 +183,9 @@ per-browser override flags with:
 - `-chrome-versions 150,151` (comma list)
 - `-firefox-versions 152,140` (comma list)
 
-Whichever are non-empty are swept (both → both sweeps in one run). Run-wide flags
+Both default to the preset version lists (Chrome + Firefox) when their flag is
+empty, so a no-flags invocation sweeps both. Whichever resolve non-empty are
+swept (both → both sweeps in one run). Run-wide flags
 (`-namespace`, `-anubis-manifest`, `-anubis-container`, `-anubis-image`,
 `-parallelism`, `-pvc`, `-out`, `-ready-timeout`, `-job-timeout`) stay. The
 removed per-browser override flags (`-deployment`, `-container`, `-image-repo`,
@@ -209,10 +225,16 @@ real-cluster-only.
 - `k8s/firefox/{deployment,service,networkpolicy,smoke-job}.yaml` — NEW.
 - `pb/techaro/lol/gubal/v1/gubal.proto` — MODIFY: `chrome_version`→`browser_version`
   (keep field 3), add `browser` (field 6) to the result message; regenerate `gen/`.
+  Request `min_items` rules unchanged.
 - `cmd/gubald/svc/smoketest/smoketest.go` — MODIFY: assemble `cfg.Browsers` from
   both version lists; map `Browser`/`BrowserVersion`.
+- `cmd/gubald/svc/smoketest/smoketest_test.go` — MODIFY: fix `valid` case to
+  include `firefox_versions`; add Firefox validation cases.
 - `cmd/chrome-sweep/main.go` — MODIFY: `-chrome-versions`/`-firefox-versions`
-  flags; drop per-browser override flags; build `cfg.Browsers`.
+  flags defaulting to preset lists; drop per-browser override flags; build
+  `cfg.Browsers`.
+- `cmd/gubalctl/main.go` — MODIFY: add `-firefox-versions` flag (defaulted),
+  default `-chrome-versions`, send both in the request.
 - Tests as listed in §6.
 
 ## Risks
