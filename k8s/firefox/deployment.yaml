@@ -17,6 +17,10 @@ spec:
       # Kata is the real trust boundary here (a VM per pod). Ancient browsers' own
       # sandboxes have unpatched escape CVEs, so we lean on Kata instead.
       runtimeClassName: kata
+      # Only schedule onto the Ryzen 5950X node (Kata + old-browser workloads want
+      # that CPU); nodes are labelled `kubectl label node <n> xeiaso.net/cpu=ryzen-5950X`.
+      nodeSelector:
+        xeiaso.net/cpu: ryzen-5950X
       automountServiceAccountToken: false
       securityContext:
         seccompProfile:
@@ -26,7 +30,7 @@ spec:
       containers:
         - name: firefox
           image: firefox
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           ports:
             - name: cdp
               containerPort: 9222
