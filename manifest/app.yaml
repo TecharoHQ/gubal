@@ -28,6 +28,12 @@ spec:
   ingress:
     enabled: true
     host: gubald.xeserv.us
+    # A smoke-test sweep runs far longer than ingress-nginx's default 60s
+    # proxy timeouts, which surface as a 504 from the ingress. Give the RPC
+    # room to finish (15m).
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "900"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "900"
 
   secrets:
     - name: iamd-secrets
