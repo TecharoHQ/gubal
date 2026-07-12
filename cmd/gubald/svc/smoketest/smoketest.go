@@ -204,12 +204,6 @@ func (s *Server) SubmitSmokeTest(ctx context.Context, req *gubalv1.SubmitSmokeTe
 
 		rep, framesDir, err := s.executeSweep(bg, test)
 
-		// Post the closure comment (and do the bundle upload) on a fresh
-		// context: bg may already be expired if the sweep ran to jobDeadline,
-		// and the PR must still get a result.
-		pubCtx, pubCancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer pubCancel()
-
 		var body string
 		if err != nil {
 			slog.ErrorContext(bg, "background sweep failed", "repo", repo, "pr", pr, "err", err)
@@ -217,11 +211,19 @@ func (s *Server) SubmitSmokeTest(ctx context.Context, req *gubalv1.SubmitSmokeTe
 		} else {
 			defer os.RemoveAll(framesDir)
 			md := chromesweep.RenderMarkdown(rep)
-			bundleURL := s.uploadBundle(pubCtx, rep, framesDir, md, pr, test.GetId())
+			// Upload gets its own budget; a slow upload must not eat into the
+			// time we need to post the result comment below.
+			upCtx, upCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			bundleURL := s.uploadBundle(upCtx, rep, framesDir, md, pr, test.GetId())
+			upCancel()
 			body = bodyResult(rep.AllPassed(), md, sha, bundleURL)
 		}
-		if err := s.gh.Comment(pubCtx, repo, pr, body); err != nil {
-			slog.ErrorContext(pubCtx, "posting result comment failed", "repo", repo, "pr", pr, "err", err)
+		// Fresh, independent context so the closure comment always posts regardless
+		// of how long the sweep or upload took.
+		postCtx, postCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer postCancel()
+		if err := s.gh.Comment(postCtx, repo, pr, body); err != nil {
+			slog.ErrorContext(postCtx, "posting result comment failed", "repo", repo, "pr", pr, "err", err)
 		}
 	}()
 
