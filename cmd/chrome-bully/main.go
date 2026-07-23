@@ -182,8 +182,18 @@ func capture(parent context.Context, version string) (string, error) {
 	tabCtx, cancelTab := chromedp.NewContext(ctx)
 	defer cancelTab()
 
-	// Set extra headers (needs the Network domain enabled) and viewport, then load.
-	setup := make([]chromedp.Action, 0, 4)
+	// ListenTarget needs a live target, and chromedp creates one lazily on the
+	// first Run. An empty Run forces it into existence so the console listener is
+	// attached before the page loads and can see its first messages.
+	if err := chromedp.Run(tabCtx); err != nil {
+		return "", fmt.Errorf("opening tab: %w", err)
+	}
+	listenConsole(tabCtx)
+
+	// Enable the console domains, set extra headers (needs the Network domain)
+	// and viewport, then load.
+	setup := make([]chromedp.Action, 0, 6)
+	setup = append(setup, consoleActions()...)
 	if len(extraHeaders) > 0 {
 		setup = append(setup, network.Enable(), network.SetExtraHTTPHeaders(extraHeaders))
 	}
