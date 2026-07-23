@@ -72,8 +72,8 @@ func Run(ctx context.Context, c *Cluster, cfg Config, framesDir string) (Report,
 
 	policies := cfg.Policies
 	if len(policies) == 0 {
-		// No embedded policies: sweep once against whatever policy Anubis is already
-		// running, tagging results with an empty policy name.
+		// No policies configured: sweep once against whatever policy Anubis is
+		// already running, tagging results with an empty policy name.
 		policies = []Policy{{Name: ""}}
 	}
 

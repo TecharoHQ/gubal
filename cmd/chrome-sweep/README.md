@@ -20,9 +20,11 @@ created by the tool — they must NOT pre-exist under the same names.
     ./var/chrome-sweep -out ./var/sweep 110 120 130 150
 
 Under `-out` the tool writes `report.zip` — bundling `report.json`, `report.md`,
-and every captured frame under `frames/<tag>.png` — plus a loose `report.md`. The
-Markdown summary is also printed to stdout. `report.json` records the Anubis image
-the run was tested against. Exit code is non-zero if any version did not pass.
+and every captured frame under `frames/<policy>/<browser>-<tag>.png` (the
+`<policy>` segment is omitted when a result has no policy) — plus a loose
+`report.md`. The Markdown summary is also printed to stdout. `report.json`
+records the Anubis image the run was tested against. Exit code is non-zero if
+any version did not pass.
 
 ## Anubis version
 
@@ -42,5 +44,9 @@ its previous image afterward.
 - `-namespace` (default `ci`), `-deployment` (base name `chrome`), `-container` (`chrome`)
 - `-image-repo` (default `ghcr.io/techarohq/gubal/chrome`)
 - `-deployment-manifest` (`k8s/deployment.yaml`), `-service-manifest` (`k8s/service.yaml`), `-networkpolicy-manifest` (`k8s/networkpolicy.yaml`), `-job-manifest` (`k8s/smoke-job.yaml`)
+- `-policy-dir` (default `test/gubal`) — directory of Anubis `botPolicies`
+  `*.yaml` rulesets. Every browser version is swept once per ruleset, and the
+  filename without its extension names the pass. A missing or ruleset-free
+  directory is a fatal error.
 - `-ready-timeout` (default `3m`), `-job-timeout` (default `4m`)
 - `-kubeconfig` (defaults to `$KUBECONFIG` or `~/.kube/config`)

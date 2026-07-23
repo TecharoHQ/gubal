@@ -34,11 +34,12 @@ func TestConsoleArgs(t *testing.T) {
 	args := []*runtime.RemoteObject{
 		{Type: "string", Value: []byte(`"challenge solved"`)}, // JSON-quoted; must be unquoted
 		{Type: "number", Value: []byte(`42`)},
-		{Type: "object", Description: "Error: boom"},           // no value; falls back to description
-		{Type: "number", UnserializableValue: "NaN"},           // neither; falls back to the marker
-		nil,                                                    // must be skipped, not panic
+		{Type: "object", Description: "Error: boom"}, // no value; falls back to description
+		{Type: "number", UnserializableValue: "NaN"}, // neither; falls back to the marker
+		{Type: "undefined"},                          // none of the three; falls back to Type
+		nil,                                          // must be skipped, not panic
 	}
-	if got, want := consoleArgs(args), "challenge solved 42 Error: boom NaN"; got != want {
+	if got, want := consoleArgs(args), "challenge solved 42 Error: boom NaN undefined"; got != want {
 		t.Fatalf("consoleArgs = %q, want %q", got, want)
 	}
 	if got := consoleArgs(nil); got != "" {

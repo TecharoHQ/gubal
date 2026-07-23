@@ -59,8 +59,10 @@ func listenConsole(ctx context.Context) {
 }
 
 // consoleLevel maps a CDP severity onto a slog level. The Runtime and Log
-// domains spell these differently ("warning" vs "warn", "verbose" vs "debug"),
-// so both spellings are accepted.
+// domains use overlapping but not identical vocabularies: Runtime's APIType
+// carries "debug"/"trace" and "assert", Log's Level carries "verbose", and both
+// spell the warning level "warning". This accepts the union, case-insensitively.
+// The extra "warn" arm is a defensive alias; no CDP enum actually emits it.
 func consoleLevel(s string) slog.Level {
 	switch strings.ToLower(s) {
 	case "error", "assert":

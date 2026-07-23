@@ -7,9 +7,10 @@ import (
 )
 
 // WriteBundle writes a zip archive to path containing report.json, report.md,
-// every result's captured frame under frames/, and every result's captured
-// container logs under logs/. Results without a captured frame (or logs) skip
-// those entries.
+// every result's captured frame under frames/<policy>/, and every result's
+// captured container logs under logs/<policy>/. The <policy> segment is omitted
+// when a result has no policy (Anubis's live ruleset). Results without a
+// captured frame (or logs) skip those entries.
 func WriteBundle(path string, reportJSON, reportMarkdown []byte, results []Result) (err error) {
 	f, err := os.Create(path)
 	if err != nil {

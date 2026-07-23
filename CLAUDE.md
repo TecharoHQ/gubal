@@ -52,6 +52,11 @@ Data flow for a sweep: `gubald`/`chrome-sweep` → `chromesweep.Run` → per-ver
 
 - **Binaries build into `./var`**, never the repo root (a stray `./gubald` etc. is a build mistake).
 - **`chromesweep` reads the `k8s/*.yaml` manifests from disk at runtime**, relative to the working directory (`DefaultConfig` paths like `k8s/deployment.yaml`). Any image running it (e.g. `gubald`) must ship those files under its `WORKDIR` **and** include a `kubectl` binary — `chromesweep.CopyFrame` shells out to `kubectl cp`.
+- **Anubis rulesets live in `test/gubal/*.yaml` and are no longer embedded.**
+  `DefaultConfig().Policies` is nil; callers fill it. `chrome-sweep` loads the
+  directory via `-policy-dir`, and `gubalctl` reads the same directory and submits
+  it as the required `policies` map on `SmokeTestRequest`, so `gubald` needs no
+  policy files on disk. An empty map is rejected — there is no server-side default.
 - **The per-version NetworkPolicy is load-bearing security, not cosmetic.** CDP on port 9222 is unauthenticated full control of the browser; a `chrome-<tag>` pod with no policy selecting it would be wide open. Always create the NetworkPolicy alongside the Deployment.
 - **CDP quirks the manifests/probes work around:** DevTools binds `127.0.0.1` only (an entrypoint socat bridge re-exposes 9222) and rejects DNS-name `Host` headers — reach Chrome by pod IP or send `Host: localhost:9222`. See `k8s/README.md`.
 - **All CLIs use flagenv:** `flagenv.Parse()` then `flag.Parse()`. Kebab-case flags map to `UPPER_SNAKE_CASE` env vars (`-access-key-id` → `ACCESS_KEY_ID`). Use `log/slog` (JSON to stderr), never `log`.
