@@ -136,6 +136,25 @@ func TestRenderMarkdownLinksIntoBundle(t *testing.T) {
 	}
 }
 
+// TestRenderJSONLinksIntoBundle checks report.json's frame_path names a path
+// that exists inside report.zip, not the scratch dir the sweep happened to
+// use — the same guarantee TestRenderMarkdownLinksIntoBundle makes for
+// report.md, so the two artifacts in the bundle agree.
+func TestRenderJSONLinksIntoBundle(t *testing.T) {
+	b, err := RenderJSON(Report{Results: []Result{
+		{Policy: "default", Browser: "chrome", Tag: "150", Status: StatusPass, FramePath: "/tmp/sweep-123/default-chrome-150.png"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "frames/default/chrome-150.png") {
+		t.Fatalf("report.json should link the bundle-relative frame path:\n%s", b)
+	}
+	if strings.Contains(string(b), "/tmp/sweep-123") {
+		t.Fatalf("report.json must not leak the local scratch path:\n%s", b)
+	}
+}
+
 func TestResultPolicyRoundTrips(t *testing.T) {
 	b, err := RenderJSON(Report{Results: []Result{{Policy: "hard", Browser: "chrome", Tag: "150", Status: StatusPass}}})
 	if err != nil {

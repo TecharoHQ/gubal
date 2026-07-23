@@ -3,6 +3,7 @@ package chromesweep
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +49,38 @@ func TestLoadPoliciesFromDirErrors(t *testing.T) {
 	dir := writePolicyDir(t, map[string]string{"README.md": "no rulesets here"})
 	if _, err := LoadPoliciesFromDir(dir); err == nil {
 		t.Fatal("a directory with no *.yaml must error")
+	}
+}
+
+func TestLoadPoliciesFromDirRejectsBadNames(t *testing.T) {
+	for name, files := range map[string]map[string]string{
+		"underscore":         {"Bad_Name.yaml": "bots: []"},
+		"too long":           {strings.Repeat("a", 50) + ".yaml": "bots: []"},
+		"empty (bare .yaml)": {".yaml": "bots: []"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := writePolicyDir(t, files)
+			if _, err := LoadPoliciesFromDir(dir); err == nil {
+				t.Fatalf("%s: want error, got none", name)
+			}
+		})
+	}
+}
+
+func TestLoadPoliciesFromDirAcceptsShippedNames(t *testing.T) {
+	// The four policy names actually shipped under test/gubal/ must keep
+	// loading — this is the proto's DNS-1123-ish pattern, not an arbitrary one.
+	files := map[string]string{}
+	for _, name := range []string{"default-config", "fast", "metarefresh", "preact"} {
+		files[name+".yaml"] = "bots: []"
+	}
+	dir := writePolicyDir(t, files)
+	got, err := LoadPoliciesFromDir(dir)
+	if err != nil {
+		t.Fatalf("shipped policy names must load: %v", err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("want 4 policies, got %d", len(got))
 	}
 }
 

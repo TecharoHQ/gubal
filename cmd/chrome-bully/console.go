@@ -17,6 +17,21 @@ import (
 // result marker.
 const consoleMsg = "browser console"
 
+// consoleTextLimit caps the page-controlled strings (console args, exception
+// details, log-entry text) forwarded into the pod log. Without a cap, an
+// untrusted page could emit a line past chromesweep's 1MB log-scanner buffer,
+// silently truncating the scan before it reaches the "captured" marker.
+const consoleTextLimit = 4096
+
+// truncate caps s at consoleTextLimit bytes, appending an elision marker so a
+// reader knows the value was cut rather than complete.
+func truncate(s string) string {
+	if len(s) <= consoleTextLimit {
+		return s
+	}
+	return s[:consoleTextLimit] + "… (truncated)"
+}
+
 // consoleActions enables the CDP domains listenConsole draws from: Runtime
 // carries console API calls and uncaught exceptions, Log carries browser-level
 // entries (network failures, CSP/security violations, deprecations). Run these
@@ -37,14 +52,14 @@ func listenConsole(ctx context.Context) {
 		switch e := ev.(type) {
 		case *runtime.EventConsoleAPICalled:
 			slog.Log(context.Background(), consoleLevel(string(e.Type)), consoleMsg,
-				"kind", "console", "type", string(e.Type), "text", consoleArgs(e.Args))
+				"kind", "console", "type", string(e.Type), "text", truncate(consoleArgs(e.Args)))
 		case *runtime.EventExceptionThrown:
 			d := e.ExceptionDetails
 			if d == nil {
 				return
 			}
 			slog.Error(consoleMsg,
-				"kind", "exception", "text", d.Text, "detail", exceptionDetail(d),
+				"kind", "exception", "text", d.Text, "detail", truncate(exceptionDetail(d)),
 				"url", d.URL, "line", d.LineNumber)
 		case *cdplog.EventEntryAdded:
 			if e.Entry == nil {
@@ -53,7 +68,7 @@ func listenConsole(ctx context.Context) {
 			en := e.Entry
 			slog.Log(context.Background(), consoleLevel(string(en.Level)), consoleMsg,
 				"kind", "log-entry", "source", string(en.Source), "level", string(en.Level),
-				"text", en.Text, "url", en.URL, "line", en.LineNumber)
+				"text", truncate(en.Text), "url", en.URL, "line", en.LineNumber)
 		}
 	})
 }

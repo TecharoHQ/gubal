@@ -211,3 +211,14 @@ func dash(s string) string {
 func RenderJSON(rep Report) ([]byte, error) {
 	return json.MarshalIndent(rep, "", "  ")
 }
+
+// MarshalJSON serializes a Result with frame_path rewritten to its
+// bundle-relative form. FramePath points into a scratch dir that does not
+// outlive the sweep, and report.json ships inside the bundle — emitting the
+// local path there would name a file the reader cannot open.
+func (r Result) MarshalJSON() ([]byte, error) {
+	type alias Result // sheds the method set, so json.Marshal won't recurse
+	a := alias(r)
+	a.FramePath = r.BundleFramePath()
+	return json.Marshal(a)
+}

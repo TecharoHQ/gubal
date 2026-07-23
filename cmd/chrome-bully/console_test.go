@@ -2,6 +2,7 @@ package main
 
 import (
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/chromedp/cdproto/runtime"
@@ -44,5 +45,21 @@ func TestConsoleArgs(t *testing.T) {
 	}
 	if got := consoleArgs(nil); got != "" {
 		t.Fatalf("consoleArgs(nil) = %q, want empty", got)
+	}
+}
+
+func TestTruncate(t *testing.T) {
+	short := "challenge solved"
+	if got := truncate(short); got != short {
+		t.Fatalf("truncate(short) = %q, want unchanged %q", got, short)
+	}
+
+	long := strings.Repeat("a", consoleTextLimit+1000)
+	got := truncate(long)
+	if len(got) >= len(long) {
+		t.Fatalf("truncate(long) did not shrink: got len %d, input len %d", len(got), len(long))
+	}
+	if !strings.HasSuffix(got, "… (truncated)") {
+		t.Fatalf("truncate(long) missing elision marker, got suffix %q", got[len(got)-30:])
 	}
 }
