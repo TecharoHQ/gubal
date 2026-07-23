@@ -33,6 +33,7 @@ var (
 	chromeVersions  = flag.String("chrome-versions", "75,80,85,90,95,100,105,110,115,120,125,130,135,140,145,150", "comma-separated Chrome major versions to test")
 	firefoxVersions = flag.String("firefox-versions", "146,147,148,149,150,151,152", "comma-separated Firefox major versions to test")
 	id              = flag.String("id", "", "request id (UUID); generated when empty")
+	policyDir       = flag.String("policy-dir", "test/gubal", "directory of Anubis botPolicies *.yaml rulesets to test against (env: POLICY_DIR)")
 
 	githubRepo = flag.String("github-repo", "", "owner/repo of the PR to post results to (env: GITHUB_REPO); enables async mode with -pr-number")
 	prNumber   = flag.Int("pr-number", 0, "PR number to post results to (env: PR_NUMBER)")
@@ -70,6 +71,11 @@ func run(ctx context.Context) error {
 		return err
 	}
 
+	policies, err := loadPolicyDir(*policyDir)
+	if err != nil {
+		return err
+	}
+
 	reqID := *id
 	if reqID == "" {
 		reqID = uuid.NewString()
@@ -95,6 +101,7 @@ func run(ctx context.Context) error {
 				AnubisImage:     *anubisImage,
 				ChromeVersions:  chromeVs,
 				FirefoxVersions: firefoxVs,
+				Policies:        policies,
 			},
 			Github: &gubalv1.GitHubTarget{
 				Repo:      *githubRepo,
@@ -109,12 +116,13 @@ func run(ctx context.Context) error {
 		return nil
 	}
 
-	slog.InfoContext(ctx, "submitting smoke test", "url", *baseURL, "id", reqID, "anubis_image", *anubisImage, "chrome_versions", chromeVs, "firefox_versions", firefoxVs)
+	slog.InfoContext(ctx, "submitting smoke test", "url", *baseURL, "id", reqID, "anubis_image", *anubisImage, "chrome_versions", chromeVs, "firefox_versions", firefoxVs, "policies", len(policies))
 	res, err := client.SmokeTest(ctx, &gubalv1.SmokeTestRequest{
 		Id:              reqID,
 		AnubisImage:     *anubisImage,
 		ChromeVersions:  chromeVs,
 		FirefoxVersions: firefoxVs,
+		Policies:        policies,
 	})
 	if err != nil {
 		return fmt.Errorf("smoke test request failed: %w", err)
