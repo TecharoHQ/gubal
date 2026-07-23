@@ -84,8 +84,13 @@ type SmokeTestRequest struct {
 	AnubisImage     string                 `protobuf:"bytes,2,opt,name=anubis_image,json=anubisImage,proto3" json:"anubis_image,omitempty"`
 	ChromeVersions  []int32                `protobuf:"varint,3,rep,packed,name=chrome_versions,json=chromeVersions,proto3" json:"chrome_versions,omitempty"`
 	FirefoxVersions []int32                `protobuf:"varint,4,rep,packed,name=firefox_versions,json=firefoxVersions,proto3" json:"firefox_versions,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// policies maps a ruleset name to a full Anubis botPolicies YAML document.
+	// Every browser version is swept once per policy. The name becomes a
+	// ConfigMap named anubis-policy-<name>, hence the DNS-1123 label pattern;
+	// max_len 49 keeps that name inside Kubernetes' 63-character limit.
+	Policies      map[string]string `protobuf:"bytes,5,rep,name=policies,proto3" json:"policies,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SmokeTestRequest) Reset() {
@@ -142,6 +147,13 @@ func (x *SmokeTestRequest) GetChromeVersions() []int32 {
 func (x *SmokeTestRequest) GetFirefoxVersions() []int32 {
 	if x != nil {
 		return x.FirefoxVersions
+	}
+	return nil
+}
+
+func (x *SmokeTestRequest) GetPolicies() map[string]string {
+	if x != nil {
+		return x.Policies
 	}
 	return nil
 }
@@ -473,12 +485,16 @@ var File_techaro_lol_gubal_v1_gubal_proto protoreflect.FileDescriptor
 
 const file_techaro_lol_gubal_v1_gubal_proto_rawDesc = "" +
 	"\n" +
-	" techaro/lol/gubal/v1/gubal.proto\x12\x14techaro.lol.gubal.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xce\x01\n" +
+	" techaro/lol/gubal/v1/gubal.proto\x12\x14techaro.lol.gubal.v1\x1a\x1bbuf/validate/validate.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x95\x03\n" +
 	"\x10SmokeTestRequest\x12\x1b\n" +
 	"\x02id\x18\x01 \x01(\tB\v\xbaH\b\xc8\x01\x01r\x03\xb0\x01\x01R\x02id\x12)\n" +
 	"\fanubis_image\x18\x02 \x01(\tB\x06\xbaH\x03\xc8\x01\x01R\vanubisImage\x127\n" +
 	"\x0fchrome_versions\x18\x03 \x03(\x05B\x0e\xbaH\v\x92\x01\b\b\x01\"\x04\x1a\x02 FR\x0echromeVersions\x129\n" +
-	"\x10firefox_versions\x18\x04 \x03(\x05B\x0e\xbaH\v\x92\x01\b\b\x01\"\x04\x1a\x02 eR\x0ffirefoxVersions\"\x88\x01\n" +
+	"\x10firefox_versions\x18\x04 \x03(\x05B\x0e\xbaH\v\x92\x01\b\b\x01\"\x04\x1a\x02 eR\x0ffirefoxVersions\x12\x87\x01\n" +
+	"\bpolicies\x18\x05 \x03(\v24.techaro.lol.gubal.v1.SmokeTestRequest.PoliciesEntryB5\xbaH2\x9a\x01/\b\x01\"%r#\x1812\x1f^[a-z0-9]([a-z0-9-]*[a-z0-9])?$*\x04r\x02\x10\x01R\bpolicies\x1a;\n" +
+	"\rPoliciesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x88\x01\n" +
 	"\x0fSmokeTestResult\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x16\n" +
 	"\x06report\x18\x02 \x01(\tR\x06report\x12C\n" +
@@ -528,7 +544,7 @@ func file_techaro_lol_gubal_v1_gubal_proto_rawDescGZIP() []byte {
 }
 
 var file_techaro_lol_gubal_v1_gubal_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_techaro_lol_gubal_v1_gubal_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_techaro_lol_gubal_v1_gubal_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_techaro_lol_gubal_v1_gubal_proto_goTypes = []any{
 	(SweepStatus)(0),                // 0: techaro.lol.gubal.v1.SweepStatus
 	(*SmokeTestRequest)(nil),        // 1: techaro.lol.gubal.v1.SmokeTestRequest
@@ -537,21 +553,23 @@ var file_techaro_lol_gubal_v1_gubal_proto_goTypes = []any{
 	(*SubmitSmokeTestRequest)(nil),  // 4: techaro.lol.gubal.v1.SubmitSmokeTestRequest
 	(*GitHubTarget)(nil),            // 5: techaro.lol.gubal.v1.GitHubTarget
 	(*SubmitSmokeTestResponse)(nil), // 6: techaro.lol.gubal.v1.SubmitSmokeTestResponse
+	nil,                             // 7: techaro.lol.gubal.v1.SmokeTestRequest.PoliciesEntry
 }
 var file_techaro_lol_gubal_v1_gubal_proto_depIdxs = []int32{
-	3, // 0: techaro.lol.gubal.v1.SmokeTestResult.results:type_name -> techaro.lol.gubal.v1.ChromeVersionResult
-	0, // 1: techaro.lol.gubal.v1.ChromeVersionResult.status:type_name -> techaro.lol.gubal.v1.SweepStatus
-	1, // 2: techaro.lol.gubal.v1.SubmitSmokeTestRequest.test:type_name -> techaro.lol.gubal.v1.SmokeTestRequest
-	5, // 3: techaro.lol.gubal.v1.SubmitSmokeTestRequest.github:type_name -> techaro.lol.gubal.v1.GitHubTarget
-	1, // 4: techaro.lol.gubal.v1.SmokeTestService.SmokeTest:input_type -> techaro.lol.gubal.v1.SmokeTestRequest
-	4, // 5: techaro.lol.gubal.v1.SmokeTestService.SubmitSmokeTest:input_type -> techaro.lol.gubal.v1.SubmitSmokeTestRequest
-	2, // 6: techaro.lol.gubal.v1.SmokeTestService.SmokeTest:output_type -> techaro.lol.gubal.v1.SmokeTestResult
-	6, // 7: techaro.lol.gubal.v1.SmokeTestService.SubmitSmokeTest:output_type -> techaro.lol.gubal.v1.SubmitSmokeTestResponse
-	6, // [6:8] is the sub-list for method output_type
-	4, // [4:6] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	7, // 0: techaro.lol.gubal.v1.SmokeTestRequest.policies:type_name -> techaro.lol.gubal.v1.SmokeTestRequest.PoliciesEntry
+	3, // 1: techaro.lol.gubal.v1.SmokeTestResult.results:type_name -> techaro.lol.gubal.v1.ChromeVersionResult
+	0, // 2: techaro.lol.gubal.v1.ChromeVersionResult.status:type_name -> techaro.lol.gubal.v1.SweepStatus
+	1, // 3: techaro.lol.gubal.v1.SubmitSmokeTestRequest.test:type_name -> techaro.lol.gubal.v1.SmokeTestRequest
+	5, // 4: techaro.lol.gubal.v1.SubmitSmokeTestRequest.github:type_name -> techaro.lol.gubal.v1.GitHubTarget
+	1, // 5: techaro.lol.gubal.v1.SmokeTestService.SmokeTest:input_type -> techaro.lol.gubal.v1.SmokeTestRequest
+	4, // 6: techaro.lol.gubal.v1.SmokeTestService.SubmitSmokeTest:input_type -> techaro.lol.gubal.v1.SubmitSmokeTestRequest
+	2, // 7: techaro.lol.gubal.v1.SmokeTestService.SmokeTest:output_type -> techaro.lol.gubal.v1.SmokeTestResult
+	6, // 8: techaro.lol.gubal.v1.SmokeTestService.SubmitSmokeTest:output_type -> techaro.lol.gubal.v1.SubmitSmokeTestResponse
+	7, // [7:9] is the sub-list for method output_type
+	5, // [5:7] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_techaro_lol_gubal_v1_gubal_proto_init() }
@@ -565,7 +583,7 @@ func file_techaro_lol_gubal_v1_gubal_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_techaro_lol_gubal_v1_gubal_proto_rawDesc), len(file_techaro_lol_gubal_v1_gubal_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   6,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

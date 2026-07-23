@@ -88,6 +88,9 @@ func (s *Server) executeSweep(ctx context.Context, req *gubalv1.SmokeTestRequest
 	cfg := chromesweep.DefaultConfig()
 	cfg.AnubisImage = req.GetAnubisImage()
 	cfg.Browsers = browsers
+	// protovalidate guarantees a non-empty, DNS-safe map at the RPC boundary,
+	// so this always yields at least one pass.
+	cfg.Policies = chromesweep.PoliciesFromMap(req.GetPolicies())
 
 	framesDir, err := os.MkdirTemp("", "smoketest-frames-")
 	if err != nil {

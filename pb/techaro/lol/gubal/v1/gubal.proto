@@ -23,6 +23,16 @@ message SmokeTestRequest {
     (buf.validate.field).repeated.min_items = 1,
     (buf.validate.field).repeated.items.int32.gt = 101
   ];
+  // policies maps a ruleset name to a full Anubis botPolicies YAML document.
+  // Every browser version is swept once per policy. The name becomes a
+  // ConfigMap named anubis-policy-<name>, hence the DNS-1123 label pattern;
+  // max_len 49 keeps that name inside Kubernetes' 63-character limit.
+  map<string, string> policies = 5 [
+    (buf.validate.field).map.min_pairs = 1,
+    (buf.validate.field).map.keys.string.pattern = "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+    (buf.validate.field).map.keys.string.max_len = 49,
+    (buf.validate.field).map.values.string.min_len = 1
+  ];
 }
 
 message SmokeTestResult {

@@ -9,6 +9,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// testPolicies is a minimal valid policy map for request fixtures.
+func testPolicies() map[string]string {
+	return map[string]string{"default-config": "bots: []"}
+}
+
 // TestSmokeTestRequestValidation exercises the same protovalidate rules the
 // handler runs, guarding against invalid buf.validate options (e.g. scalar rules
 // on a repeated field, which fail to compile at validation time).
@@ -22,7 +27,7 @@ func TestSmokeTestRequestValidation(t *testing.T) {
 	}{
 		{
 			name: "valid",
-			req:  &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "ghcr.io/techarohq/anubis:latest", ChromeVersions: []int32{120, 150}, FirefoxVersions: []int32{140, 152}},
+			req:  &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "ghcr.io/techarohq/anubis:latest", ChromeVersions: []int32{120, 150}, FirefoxVersions: []int32{140, 152}, Policies: testPolicies()},
 		},
 		{
 			name:    "empty versions",
@@ -52,6 +57,31 @@ func TestSmokeTestRequestValidation(t *testing.T) {
 		{
 			name:    "firefox version too low",
 			req:     &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "x", ChromeVersions: []int32{120}, FirefoxVersions: []int32{100}},
+			wantErr: true,
+		},
+		{
+			name:    "missing policies",
+			req:     &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "x", ChromeVersions: []int32{120}, FirefoxVersions: []int32{140}},
+			wantErr: true,
+		},
+		{
+			name:    "empty policies map",
+			req:     &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "x", ChromeVersions: []int32{120}, FirefoxVersions: []int32{140}, Policies: map[string]string{}},
+			wantErr: true,
+		},
+		{
+			name:    "policy name not dns-safe",
+			req:     &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "x", ChromeVersions: []int32{120}, FirefoxVersions: []int32{140}, Policies: map[string]string{"Default_Config": "bots: []"}},
+			wantErr: true,
+		},
+		{
+			name:    "policy name too long for a configmap",
+			req:     &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "x", ChromeVersions: []int32{120}, FirefoxVersions: []int32{140}, Policies: map[string]string{strings.Repeat("a", 50): "bots: []"}},
+			wantErr: true,
+		},
+		{
+			name:    "empty policy body",
+			req:     &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "x", ChromeVersions: []int32{120}, FirefoxVersions: []int32{140}, Policies: map[string]string{"default-config": ""}},
 			wantErr: true,
 		},
 	} {
@@ -91,7 +121,7 @@ func TestBrowsersFor(t *testing.T) {
 func TestSubmitSmokeTestRequestValidation(t *testing.T) {
 	t.Parallel()
 
-	valid := &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "x", ChromeVersions: []int32{120}, FirefoxVersions: []int32{140}}
+	valid := &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "x", ChromeVersions: []int32{120}, FirefoxVersions: []int32{140}, Policies: testPolicies()}
 
 	for _, tt := range []struct {
 		name    string

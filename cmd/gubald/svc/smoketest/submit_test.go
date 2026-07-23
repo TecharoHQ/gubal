@@ -42,7 +42,7 @@ func errCode(err error) twirp.ErrorCode {
 
 func validSubmit() *gubalv1.SubmitSmokeTestRequest {
 	return &gubalv1.SubmitSmokeTestRequest{
-		Test:   &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "x", ChromeVersions: []int32{120}, FirefoxVersions: []int32{140}},
+		Test:   &gubalv1.SmokeTestRequest{Id: uuid.NewString(), AnubisImage: "x", ChromeVersions: []int32{120}, FirefoxVersions: []int32{140}, Policies: map[string]string{"default-config": "bots: []"}},
 		Github: &gubalv1.GitHubTarget{Repo: "TecharoHQ/anubis", PrNumber: 1741},
 	}
 }
