@@ -122,6 +122,20 @@ func TestPolicyStats(t *testing.T) {
 	}
 }
 
+// TestRenderMarkdownLinksIntoBundle checks the frame column names a path that
+// exists inside report.zip, not the scratch dir the sweep happened to use.
+func TestRenderMarkdownLinksIntoBundle(t *testing.T) {
+	md := RenderMarkdown(Report{Results: []Result{
+		{Policy: "default", Browser: "chrome", Tag: "150", Status: StatusPass, FramePath: "/tmp/sweep-123/default-chrome-150.png"},
+	}})
+	if !strings.Contains(md, "frames/default/chrome-150.png") {
+		t.Fatalf("report should link the bundle-relative frame path:\n%s", md)
+	}
+	if strings.Contains(md, "/tmp/sweep-123") {
+		t.Fatalf("report must not leak the local scratch path:\n%s", md)
+	}
+}
+
 func TestResultPolicyRoundTrips(t *testing.T) {
 	b, err := RenderJSON(Report{Results: []Result{{Policy: "hard", Browser: "chrome", Tag: "150", Status: StatusPass}}})
 	if err != nil {

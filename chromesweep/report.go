@@ -151,7 +151,7 @@ func renderBrowserGroups(b *strings.Builder, results []Result) {
 		b.WriteString("|-----|--------|-----------------|-------|--------|\n")
 		for _, r := range rs {
 			fmt.Fprintf(b, "| %s | %s | %s | %s | %s |\n",
-				r.Tag, r.Status, dash(r.BrowserVersion), dash(r.FramePath), dash(r.Detail))
+				r.Tag, r.Status, dash(r.BrowserVersion), dash(r.BundleFramePath()), dash(r.Detail))
 		}
 		b.WriteString("\n")
 		for _, r := range rs {

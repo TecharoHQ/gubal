@@ -19,9 +19,9 @@ func TestWriteBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 	results := []Result{
-		{Tag: "150", Status: StatusPass, FramePath: f150},
-		{Tag: "120", Status: StatusPass, FramePath: f120},
-		{Tag: "999", Status: StatusFail}, // no frame — must be skipped
+		{Policy: "fast", Browser: "chrome", Tag: "150", Status: StatusPass, FramePath: f150},
+		{Policy: "fast", Browser: "chrome", Tag: "120", Status: StatusPass, FramePath: f120},
+		{Policy: "fast", Browser: "chrome", Tag: "999", Status: StatusFail}, // no frame — must be skipped
 	}
 	reportJSON := []byte(`{"results":[]}`)
 	reportMarkdown := []byte("# Chrome version sweep — 2/3 passed\n")
@@ -55,11 +55,11 @@ func TestWriteBundle(t *testing.T) {
 	if !bytes.Equal(got["report.md"], reportMarkdown) {
 		t.Fatalf("report.md = %q, want %q", got["report.md"], reportMarkdown)
 	}
-	if !bytes.Equal(got["frames/150.png"], []byte("PNG-150")) {
-		t.Fatalf("frames/150.png = %q", got["frames/150.png"])
+	if !bytes.Equal(got["frames/fast/chrome-150.png"], []byte("PNG-150")) {
+		t.Fatalf("frames/fast/chrome-150.png = %q", got["frames/fast/chrome-150.png"])
 	}
-	if !bytes.Equal(got["frames/120.png"], []byte("PNG-120")) {
-		t.Fatalf("frames/120.png = %q", got["frames/120.png"])
+	if !bytes.Equal(got["frames/fast/chrome-120.png"], []byte("PNG-120")) {
+		t.Fatalf("frames/fast/chrome-120.png = %q", got["frames/fast/chrome-120.png"])
 	}
 	if len(got) != 4 {
 		t.Fatalf("expected 4 entries (report.json + report.md + 2 frames), got %d", len(got))
@@ -74,6 +74,7 @@ func TestWriteBundleIncludesLogs(t *testing.T) {
 	}
 	results := []Result{
 		{
+			Policy:    "fast",
 			Browser:   "firefox",
 			Tag:       "152",
 			Status:    StatusFail,
@@ -84,7 +85,7 @@ func TestWriteBundleIncludesLogs(t *testing.T) {
 				{Container: "smoke", Content: ""}, // empty — must be skipped
 			},
 		},
-		{Browser: "chrome", Tag: "150", Status: StatusPass}, // no logs, no frame
+		{Policy: "fast", Browser: "chrome", Tag: "150", Status: StatusPass}, // no logs, no frame
 	}
 	zipPath := filepath.Join(dir, "report.zip")
 	if err := WriteBundle(zipPath, []byte("{}"), []byte("# report\n"), results); err != nil {
@@ -110,13 +111,13 @@ func TestWriteBundleIncludesLogs(t *testing.T) {
 		got[f.Name] = buf.Bytes()
 	}
 
-	if !bytes.Equal(got["logs/firefox-152-firefox.log"], []byte("bidi client closed")) {
-		t.Fatalf("firefox log = %q", got["logs/firefox-152-firefox.log"])
+	if !bytes.Equal(got["logs/fast/firefox-152-firefox.log"], []byte("bidi client closed")) {
+		t.Fatalf("firefox log = %q", got["logs/fast/firefox-152-firefox.log"])
 	}
-	if !bytes.Equal(got["logs/firefox-152-chrome-bully.log"], []byte("fatal: loading url")) {
-		t.Fatalf("chrome-bully log = %q", got["logs/firefox-152-chrome-bully.log"])
+	if !bytes.Equal(got["logs/fast/firefox-152-chrome-bully.log"], []byte("fatal: loading url")) {
+		t.Fatalf("chrome-bully log = %q", got["logs/fast/firefox-152-chrome-bully.log"])
 	}
-	if _, ok := got["logs/firefox-152-smoke.log"]; ok {
+	if _, ok := got["logs/fast/firefox-152-smoke.log"]; ok {
 		t.Fatal("empty log content must be skipped")
 	}
 	// report.json + report.md + 1 frame + 2 logs = 5.
@@ -131,4 +132,67 @@ func keys(m map[string][]byte) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestWriteBundleSeparatesPolicies is the reason bundles gained subfolders: the
+// same browser+tag under two policies must not collide on one zip entry name.
+func TestWriteBundleSeparatesPolicies(t *testing.T) {
+	dir := t.TempDir()
+	frame := filepath.Join(dir, "chrome-150.png")
+	if err := os.WriteFile(frame, []byte("PNG"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	results := []Result{
+		{Policy: "default-config", Browser: "chrome", Tag: "150", Status: StatusFail, FramePath: frame,
+			Logs: []LogCapture{{Container: "chrome-bully", Content: "under default-config"}}},
+		{Policy: "fast", Browser: "chrome", Tag: "150", Status: StatusFail, FramePath: frame,
+			Logs: []LogCapture{{Container: "chrome-bully", Content: "under fast"}}},
+	}
+	zipPath := filepath.Join(dir, "report.zip")
+	if err := WriteBundle(zipPath, []byte("{}"), []byte("# report\n"), results); err != nil {
+		t.Fatal(err)
+	}
+
+	zr, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	got := map[string][]byte{}
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var buf bytes.Buffer
+		if _, err := buf.ReadFrom(rc); err != nil {
+			t.Fatal(err)
+		}
+		rc.Close()
+		if _, dup := got[f.Name]; dup {
+			t.Fatalf("duplicate zip entry %q", f.Name)
+		}
+		got[f.Name] = buf.Bytes()
+	}
+
+	if !bytes.Equal(got["logs/default-config/chrome-150-chrome-bully.log"], []byte("under default-config")) {
+		t.Fatalf("default-config log = %q", got["logs/default-config/chrome-150-chrome-bully.log"])
+	}
+	if !bytes.Equal(got["logs/fast/chrome-150-chrome-bully.log"], []byte("under fast")) {
+		t.Fatalf("fast log = %q", got["logs/fast/chrome-150-chrome-bully.log"])
+	}
+}
+
+func TestBundlePathsWithoutPolicy(t *testing.T) {
+	// Anubis's live ruleset produces an empty Policy; the subfolder is omitted.
+	r := Result{Browser: "chrome", Tag: "150", FramePath: "/tmp/x/chrome-150.png"}
+	if got := r.BundleFramePath(); got != "frames/chrome-150.png" {
+		t.Fatalf("BundleFramePath = %q", got)
+	}
+	if got := r.BundleLogPath("smoke"); got != "logs/chrome-150-smoke.log" {
+		t.Fatalf("BundleLogPath = %q", got)
+	}
+	if got := (Result{Browser: "chrome", Tag: "150"}).BundleFramePath(); got != "" {
+		t.Fatalf("a result with no frame must yield %q, got %q", "", got)
+	}
 }
