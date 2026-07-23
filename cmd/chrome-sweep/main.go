@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/TecharoHQ/gubal/chromesweep"
+	"github.com/facebookgo/flagenv"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -36,6 +37,8 @@ func main() {
 	// Default to the preset version lists; either flag overrides its browser.
 	chromeVersions := flag.String("chrome-versions", strings.Join(chromesweep.ChromeBrowser().Versions, ","), "comma-separated Chrome major versions to sweep (empty to skip Chrome)")
 	firefoxVersions := flag.String("firefox-versions", strings.Join(chromesweep.FirefoxBrowser().Versions, ","), "comma-separated Firefox major versions to sweep (empty to skip Firefox)")
+	policyDir := flag.String("policy-dir", "test/gubal", "directory of Anubis botPolicies *.yaml rulesets; each becomes one test pass")
+	flagenv.Parse()
 	flag.Parse()
 
 	browsers, err := browsersFromFlags(*chromeVersions, *firefoxVersions)
@@ -45,6 +48,14 @@ func main() {
 		os.Exit(1)
 	}
 	cfg.Browsers = browsers
+
+	policies, err := chromesweep.LoadPoliciesFromDir(*policyDir)
+	if err != nil {
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+		slog.Error("bad policy dir", "err", err)
+		os.Exit(1)
+	}
+	cfg.Policies = policies
 
 	if err := run(*kubeconfig, cfg); err != nil {
 		slog.Error("fatal", "err", err)
