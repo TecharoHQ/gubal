@@ -7,7 +7,6 @@
 package chromesweep
 
 import (
-	"fmt"
 	"time"
 )
 
@@ -72,7 +71,9 @@ type Config struct {
 	JobTimeout      time.Duration
 	Browsers        []Browser
 	// Policies are the Anubis rulesets to sweep every browser against, one test
-	// pass per policy. Defaults to the rulesets embedded under policies/.
+	// pass per policy. Callers fill this in: chrome-sweep loads it from
+	// -policy-dir, gubald takes it from the request. Empty sweeps once against
+	// whatever ruleset Anubis is already running.
 	Policies []Policy
 }
 
@@ -90,17 +91,5 @@ func DefaultConfig() Config {
 		ReadyTimeout:    3 * time.Minute,
 		JobTimeout:      4 * time.Minute,
 		Browsers:        []Browser{ChromeBrowser(), FirefoxBrowser()},
-		Policies:        mustLoadPolicies(),
 	}
-}
-
-// mustLoadPolicies loads the embedded policy rulesets, panicking on failure. The
-// files are compiled into the binary, so an error here is a build/programming bug,
-// not a runtime condition.
-func mustLoadPolicies() []Policy {
-	p, err := LoadPolicies()
-	if err != nil {
-		panic(fmt.Sprintf("loading embedded anubis policies: %v", err))
-	}
-	return p
 }

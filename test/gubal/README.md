@@ -1,13 +1,14 @@
 # Anubis sweep policies
 
 Each `*.yaml` here is a full [Anubis](https://github.com/TecharoHQ/anubis)
-`botPolicies` ruleset. They are compiled into the `chromesweep` binary via
-`go:embed`, and every sweep runs the full browser × version matrix against **each**
-ruleset as a separate test pass named by the file's base name (e.g. `default.yaml`
-→ the `default` pass).
+`botPolicies` ruleset. Every sweep runs the full browser × version matrix against
+**each** ruleset as a separate test pass named by the file's base name (e.g.
+`fast.yaml` → the `fast` pass).
 
-To add a pass: drop a new `*.yaml` file in this directory and rebuild. No code
-change is needed — `LoadPolicies()` discovers it.
+These files are read from disk, not compiled in. `chrome-sweep` loads them via
+`-policy-dir` (default `test/gubal`), and `gubalctl` reads the same directory and
+submits the set to `gubald` in the request. To add a pass: drop a new `*.yaml`
+file here. No code change and no rebuild is needed.
 
 Constraints:
 

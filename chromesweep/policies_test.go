@@ -1,34 +1,75 @@
 package chromesweep
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
-func TestLoadPolicies(t *testing.T) {
-	got, err := LoadPolicies()
+// writePolicyDir builds a temp dir holding the given filename -> content pairs.
+func writePolicyDir(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func TestLoadPoliciesFromDir(t *testing.T) {
+	dir := writePolicyDir(t, map[string]string{
+		"fast.yaml":           "bots: [fast]",
+		"default-config.yaml": "bots: [default]",
+		"notes.txt":           "not a policy",
+	})
+
+	got, err := LoadPoliciesFromDir(dir)
 	if err != nil {
-		t.Fatalf("LoadPolicies: %v", err)
+		t.Fatalf("LoadPoliciesFromDir: %v", err)
 	}
-	if len(got) < 2 {
-		t.Fatalf("want >= 2 embedded policies, got %d", len(got))
+	if len(got) != 2 {
+		t.Fatalf("want 2 policies (non-yaml skipped), got %d: %+v", len(got), got)
 	}
+	// Sorted ascending, extension stripped.
+	if got[0].Name != "default-config" || got[1].Name != "fast" {
+		t.Fatalf("names = %q, %q; want default-config, fast", got[0].Name, got[1].Name)
+	}
+	if string(got[0].Content) != "bots: [default]" {
+		t.Fatalf("default-config content = %q", got[0].Content)
+	}
+}
 
-	names := map[string]bool{}
-	for i, p := range got {
-		names[p.Name] = true
-		if len(p.Content) == 0 {
-			t.Fatalf("policy %q has empty content", p.Name)
-		}
-		// Name must be the filename without extension: no ".yaml", no slash.
-		if got, bad := p.Name, ".yaml"; len(got) >= len(bad) && got[len(got)-len(bad):] == bad {
-			t.Fatalf("policy name %q still has extension", p.Name)
-		}
-		// Sorted ascending by Name.
-		if i > 0 && got[i-1].Name > p.Name {
-			t.Fatalf("policies not sorted: %q before %q", got[i-1].Name, p.Name)
+func TestLoadPoliciesFromDirErrors(t *testing.T) {
+	if _, err := LoadPoliciesFromDir(filepath.Join(t.TempDir(), "does-not-exist")); err == nil {
+		t.Fatal("a missing directory must error")
+	}
+	dir := writePolicyDir(t, map[string]string{"README.md": "no rulesets here"})
+	if _, err := LoadPoliciesFromDir(dir); err == nil {
+		t.Fatal("a directory with no *.yaml must error")
+	}
+}
+
+func TestPoliciesFromMap(t *testing.T) {
+	got := PoliciesFromMap(map[string]string{
+		"fast":           "bots: [fast]",
+		"default-config": "bots: [default]",
+		"preact":         "bots: [preact]",
+	})
+	if len(got) != 3 {
+		t.Fatalf("want 3 policies, got %d", len(got))
+	}
+	// Sorted, so pass ordering never depends on map iteration order.
+	for i, want := range []string{"default-config", "fast", "preact"} {
+		if got[i].Name != want {
+			t.Fatalf("policy %d = %q, want %q", i, got[i].Name, want)
 		}
 	}
-	for _, want := range []string{"default-config", "fast"} {
-		if !names[want] {
-			t.Fatalf("missing policy %q; have %v", want, names)
-		}
+	if string(got[1].Content) != "bots: [fast]" {
+		t.Fatalf("fast content = %q", got[1].Content)
+	}
+	if PoliciesFromMap(nil) != nil {
+		t.Fatal("an empty map must yield nil")
 	}
 }
