@@ -288,14 +288,31 @@ longer carries policies; callers fill them in."
 
 ---
 
-### Task 2: Give `chrome-sweep` a `-policy-dir` flag
+### Task 2: Give `chrome-sweep` a `-policy-dir` flag (and flagenv)
 
 **Files:**
-- Modify: `cmd/chrome-sweep/main.go:35-47` (flag + load)
+- Modify: `cmd/chrome-sweep/main.go:9-21` (imports), `:35-47` (flagenv + flag + load)
 
 **Interfaces:**
 - Consumes: `chromesweep.LoadPoliciesFromDir(dir string) ([]Policy, error)` from Task 1.
 - Produces: nothing other tasks depend on.
+
+`chrome-sweep` is the only CLI in the repo that does not call `flagenv.Parse()`, which contradicts the Global Constraint that all CLIs use flagenv. This task fixes that alongside the new flag, so `POLICY_DIR` behaves the same in `chrome-sweep` as in `gubalctl`. Note this makes **all** of chrome-sweep's existing flags env-readable (`-namespace` → `NAMESPACE`, `-out` → `OUT`, and so on) — that is the intended effect, not a side effect to avoid.
+
+- [ ] **Step 0: Add the flagenv import**
+
+In `cmd/chrome-sweep/main.go`, add to the import block:
+
+```go
+	"github.com/facebookgo/flagenv"
+```
+
+Then, in `main`, call it immediately before the existing `flag.Parse()` (flagenv must run first so explicit command-line flags still win over env vars):
+
+```go
+	flagenv.Parse()
+	flag.Parse()
+```
 
 - [ ] **Step 1: Add the flag and load the policies**
 
@@ -327,6 +344,14 @@ go build -o ./var/chrome-sweep ./cmd/chrome-sweep
 ```
 
 Expected: the help text shows `-policy-dir string` with default `test/gubal`.
+
+Confirm flagenv is wired by checking the env var is honored:
+
+```bash
+POLICY_DIR=/nonexistent-from-env ./var/chrome-sweep 2>&1 | head -2
+```
+
+Expected: the error names `/nonexistent-from-env`, proving `POLICY_DIR` reached the flag.
 
 - [ ] **Step 3: Verify a bad policy dir fails loudly**
 
